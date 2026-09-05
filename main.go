@@ -4,9 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"cs2bot/internal/api"
@@ -29,33 +27,6 @@ var SupportedTeams = []TeamInfo{
 	{ID: "3240", Name: "MOUZ"},
 }
 
-// === КЭШ В ОПЕРАТИВНОЙ ПАМЯТИ ===
-type MatchCache struct {
-	mu      sync.RWMutex
-	matches map[string][]api.Match
-}
-
-func NewMatchCache() *MatchCache {
-	return &MatchCache{
-		matches: make(map[string][]api.Match),
-	}
-}
-
-func (c *MatchCache) UpdateMultiple(newData map[string][]api.Match) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for teamID, matches := range newData {
-		c.matches[teamID] = matches
-	}
-}
-
-func (c *MatchCache) Get(teamID string) ([]api.Match, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	data, exists := c.matches[teamID]
-	return data, exists
-}
-
 func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("Файл .env не найден.")
@@ -74,8 +45,6 @@ func main() {
 	}
 	defer db.Close()
 
-	matchCache := NewMatchCache()
-
 	pref := telebot.Settings{
 		Token:  telegramToken,
 		Poller: &telebot.LongPoller{Timeout: 10 * time.Second},
@@ -85,9 +54,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	go startPoller(db, matchCache, pandaToken)
+	// Запускаем умный поллер
+	go startPoller(b, db, pandaToken)
 
-	// === 1. ГЛАВНОЕ МЕНЮ ===
+	// === ГЛАВНОЕ МЕНЮ ===
 	mainMenu := &telebot.ReplyMarkup{ResizeKeyboard: true}
 	btnSchedule := mainMenu.Text("📅 Узнать расписание")
 	btnSubscribe := mainMenu.Text("🔔 Подписаться на команды")
@@ -100,13 +70,13 @@ func main() {
 		return c.Send("Привет! Выбери нужное действие в меню ниже:", mainMenu)
 	})
 
-	// === 2. НАЖАТИЕ: ПОДПИСАТЬСЯ ===
+	// === НАЖАТИЕ: ПОДПИСАТЬСЯ ===
 	b.Handle(&btnSubscribe, func(c telebot.Context) error {
 		menu := buildTeamsKeyboard("sub_", SupportedTeams)
 		return c.Send("Выбери команду, на которую хочешь подписаться:", menu)
 	})
 
-	// === 3. НАЖАТИЕ: РАСПИСАНИЕ (ХРОНОЛОГИЧЕСКИЙ СПИСОК) ===
+	// === НАЖАТИЕ: РАСПИСАНИЕ (ИЗ БАЗЫ ДАННЫХ) ===
 	b.Handle(&btnSchedule, func(c telebot.Context) error {
 		userID := c.Sender().ID
 
@@ -119,67 +89,23 @@ func main() {
 			return c.Send("Вы еще не подписаны ни на одну команду.\nНажмите «🔔 Подписаться на команды».")
 		}
 
-		// 1. Собираем все матчи пользователя в единую мапу (чтобы избежать дубликатов)
-		// Используем ID матча как ключ
-		uniqueMatches := make(map[int]api.Match)
-		cacheIsLoading := false
-
-		for _, subName := range subs {
-			var teamID string
-			for _, t := range SupportedTeams {
-				if strings.ToUpper(t.Name) == strings.ToUpper(subName) {
-					teamID = t.ID
-					break
-				}
-			}
-
-			if teamID == "" {
-				continue
-			}
-
-			matches, exists := matchCache.Get(teamID)
-			if !exists {
-				// Если хотя бы одной команды еще нет в кэше, ставим флаг
-				cacheIsLoading = true
-				continue
-			}
-
-			for _, match := range matches {
-				uniqueMatches[match.ID] = match
-			}
+		// Теперь мы просто просим у базы отсортированный список матчей для этих подписок!
+		matches, err := db.GetUpcomingUserMatches(subs)
+		if err != nil {
+			return c.Send("Ошибка получения расписания.")
 		}
 
-		if cacheIsLoading && len(uniqueMatches) == 0 {
-			return c.Send("⏳ <i>Расписание еще загружается в кэш. Попробуй через минуту.</i>", telebot.ModeHTML)
-		}
-
-		if len(uniqueMatches) == 0 {
+		if len(matches) == 0 {
 			return c.Send("Для ваших команд в ближайшее время игр не найдено.")
 		}
 
-		// 2. Перекладываем уникальные матчи в массив для сортировки
-		var sortedMatches []api.Match
-		for _, m := range uniqueMatches {
-			sortedMatches = append(sortedMatches, m)
-		}
-
-		// 3. Сортируем массив по времени возрастания (от ближайших к дальним)
-		sort.Slice(sortedMatches, func(i, j int) bool {
-			return sortedMatches[i].Time.Before(sortedMatches[j].Time)
-		})
-
-		// 4. Формируем красивый хронологический список
 		var sb strings.Builder
 		sb.WriteString("🎮 <b>Предстоящие матчи:</b>\n\n")
 
-		for _, match := range sortedMatches {
+		for _, match := range matches {
 			timeStr := match.Time.In(time.Local).Format("02.01 15:04")
 
-			// Выделяем жирным команды, на которые подписан пользователь
-			// (опциональное украшение, чтобы было видно, из-за кого матч попал в список)
-			teamA := match.TeamA
-			teamB := match.TeamB
-
+			teamA, teamB := match.TeamA, match.TeamB
 			for _, sub := range subs {
 				if strings.EqualFold(match.TeamA, sub) {
 					teamA = "<b>" + teamA + "</b>"
@@ -195,9 +121,7 @@ func main() {
 		return c.Send(sb.String(), telebot.ModeHTML)
 	})
 
-	// === 4. ИНЛАЙН ОБРАБОТЧИК ДЛЯ ПОДПИСОК ===
-	// Обработчик schedule_ полностью удален, так как он больше не нужен!
-
+	// === ИНЛАЙН ПОДПИСКА ===
 	b.Handle("\fsub_", func(c telebot.Context) error {
 		payload := c.Callback().Data
 		parts := strings.Split(payload, "|")
@@ -209,7 +133,6 @@ func main() {
 		userID := c.Sender().ID
 
 		if err := db.Subscribe(userID, teamName); err != nil {
-			log.Printf("Ошибка подписки: %v", err)
 			return c.Respond(&telebot.CallbackResponse{Text: "Ошибка при подписке."})
 		}
 
@@ -221,8 +144,8 @@ func main() {
 	b.Start()
 }
 
-// === 5. ФОНОВЫЙ ОПРОС API ===
-func startPoller(db *storage.Storage, cache *MatchCache, pandaToken string) {
+// === ФОНОВЫЙ ОПРОС И УВЕДОМЛЕНИЯ ===
+func startPoller(bot *telebot.Bot, db *storage.Storage, pandaToken string) {
 	updateRoutine := func() {
 		subscribedTeams, err := db.GetAllSubscribedTeams()
 		if err != nil || len(subscribedTeams) == 0 {
@@ -230,13 +153,10 @@ func startPoller(db *storage.Storage, cache *MatchCache, pandaToken string) {
 		}
 
 		var idsToFetch []string
-		requestedIDs := make(map[string]bool)
-
 		for _, teamName := range subscribedTeams {
 			for _, t := range SupportedTeams {
 				if strings.ToUpper(t.Name) == strings.ToUpper(teamName) {
 					idsToFetch = append(idsToFetch, t.ID)
-					requestedIDs[t.ID] = true
 					break
 				}
 			}
@@ -248,34 +168,57 @@ func startPoller(db *storage.Storage, cache *MatchCache, pandaToken string) {
 
 		matches, err := api.FetchMatchesByTeamIDs(pandaToken, idsToFetch)
 		if err != nil {
-			log.Printf("Ошибка группового запроса матчей: %v", err)
+			log.Printf("Ошибка запроса матчей: %v", err)
 			return
 		}
 
-		groupedMatches := make(map[string][]api.Match)
-
-		for id := range requestedIDs {
-			groupedMatches[id] = []api.Match{}
-		}
-
+		// Сверяем матчи с базой данных
 		for _, match := range matches {
-			idA := fmt.Sprintf("%d", match.TeamAID)
-			idB := fmt.Sprintf("%d", match.TeamBID)
-
-			if requestedIDs[idA] {
-				groupedMatches[idA] = append(groupedMatches[idA], match)
+			isNew, timeChanged, oldTime, err := db.ProcessMatch(match)
+			if err != nil {
+				log.Printf("Ошибка сохранения матча %d: %v", match.ID, err)
+				continue
 			}
-			if requestedIDs[idB] {
-				groupedMatches[idB] = append(groupedMatches[idB], match)
+
+			// Если ничего не изменилось — идем дальше
+			if !isNew && !timeChanged {
+				continue
+			}
+
+			// Формируем красивое уведомление в зависимости от типа события
+			var msg string
+			timeStr := match.Time.In(time.Local).Format("15:04 02.01")
+
+			if isNew {
+				msg = fmt.Sprintf("🆕 <b>Добавлен новый матч!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s", match.TeamA, match.TeamB, timeStr)
+			} else if timeChanged {
+				oldTimeStr := oldTime.In(time.Local).Format("15:04 02.01")
+				msg = fmt.Sprintf("⚠️ <b>Время матча изменено!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\n<s>Старое время: %s</s>\n⏰ Новое время: %s", match.TeamA, match.TeamB, oldTimeStr, timeStr)
+			}
+
+			// Находим всех, кому это интересно (объединяем подписчиков TeamA и TeamB без дубликатов)
+			usersA, _ := db.GetUsersByTeam(match.TeamA)
+			usersB, _ := db.GetUsersByTeam(match.TeamB)
+
+			uniqueUsers := make(map[int64]bool)
+			for _, u := range usersA {
+				uniqueUsers[u] = true
+			}
+			for _, u := range usersB {
+				uniqueUsers[u] = true
+			}
+
+			// Рассылаем
+			for userID := range uniqueUsers {
+				bot.Send(telebot.ChatID(userID), msg, telebot.ModeHTML)
 			}
 		}
 
-		cache.UpdateMultiple(groupedMatches)
+		// Вычищаем матчи, которые прошли вчера, чтобы база не разрасталась бесконечно
+		db.CleanOldMatches()
 	}
 
-	log.Println("Выполняю первичный прогрев кэша (Bulk request)...")
 	updateRoutine()
-	log.Println("Кэш успешно прогрет.")
 
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
@@ -285,7 +228,6 @@ func startPoller(db *storage.Storage, cache *MatchCache, pandaToken string) {
 	}
 }
 
-// === 6. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
 func buildTeamsKeyboard(actionPrefix string, teamsToDisplay []TeamInfo) *telebot.ReplyMarkup {
 	menu := &telebot.ReplyMarkup{}
 
@@ -294,16 +236,13 @@ func buildTeamsKeyboard(actionPrefix string, teamsToDisplay []TeamInfo) *telebot
 
 	for _, t := range teamsToDisplay {
 		payload := actionPrefix + "|" + t.ID + "|" + t.Name
-		btn := menu.Data(t.Name, actionPrefix, payload)
-
-		currentRow = append(currentRow, btn)
+		currentRow = append(currentRow, menu.Data(t.Name, actionPrefix, payload))
 
 		if len(currentRow) == 2 {
 			rows = append(rows, menu.Row(currentRow...))
 			currentRow = nil
 		}
 	}
-
 	if len(currentRow) > 0 {
 		rows = append(rows, menu.Row(currentRow...))
 	}
