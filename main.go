@@ -24,6 +24,7 @@ var SupportedTeams = []TeamInfo{
 	{ID: "130564", Name: "Falcons"},
 	{ID: "135177", Name: "BC.Game"},
 	{ID: "3210", Name: "G2"},
+	{ID: "3212", Name: "FaZe"},
 	{ID: "3240", Name: "MOUZ"},
 }
 
@@ -147,6 +148,7 @@ func main() {
 // === ФОНОВЫЙ ОПРОС И УВЕДОМЛЕНИЯ ===
 func startPoller(bot *telebot.Bot, db *storage.Storage, pandaToken string) {
 	updateRoutine := func() {
+		log.Println("Обновляем список подписок!")
 		subscribedTeams, err := db.GetAllSubscribedTeams()
 		if err != nil || len(subscribedTeams) == 0 {
 			return
@@ -174,29 +176,47 @@ func startPoller(bot *telebot.Bot, db *storage.Storage, pandaToken string) {
 
 		// Сверяем матчи с базой данных
 		for _, match := range matches {
-			isNew, timeChanged, oldTime, err := db.ProcessMatch(match)
+			isNew, timeChanged, teamsChanged, oldTime, oldTeamA, oldTeamB, err := db.ProcessMatch(match)
 			if err != nil {
 				log.Printf("Ошибка сохранения матча %d: %v", match.ID, err)
 				continue
 			}
 
 			// Если ничего не изменилось — идем дальше
-			if !isNew && !timeChanged {
+			if !isNew && !timeChanged && !teamsChanged {
 				continue
 			}
 
-			// Формируем красивое уведомление в зависимости от типа события
+			if match.TeamA == "TBD" || match.TeamB == "TBD" {
+				// Матч сохранен в базу, он появится в расписании, но мы не спамим в чат.
+				continue
+			}
+
+			// Формируем красивое уведомление
 			var msg string
 			timeStr := match.Time.In(time.Local).Format("15:04 02.01")
 
 			if isNew {
-				msg = fmt.Sprintf("🆕 <b>Добавлен новый матч!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s", match.TeamA, match.TeamB, timeStr)
+				msg = fmt.Sprintf("🆕 <b>Добавлен новый матч!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s",
+					match.TeamA, match.TeamB, timeStr)
+			} else if teamsChanged {
+				// Изменился соперник! (например, TBD стал известен)
+				// Учитываем, что заодно могло поменяться и время
+				timeText := fmt.Sprintf("⏰ Время: %s", timeStr)
+				if timeChanged {
+					oldTimeStr := oldTime.In(time.Local).Format("15:04 02.01")
+					timeText = fmt.Sprintf("<s>Время: %s</s>\n⏰ Новое: %s", oldTimeStr, timeStr)
+				}
+
+				msg = fmt.Sprintf("🔄 <b>Определился соперник!</b>\n\n<s>%s vs %s</s>\n🛡 <b>%s</b> vs <b>%s</b>\n%s",
+					oldTeamA, oldTeamB, match.TeamA, match.TeamB, timeText)
 			} else if timeChanged {
 				oldTimeStr := oldTime.In(time.Local).Format("15:04 02.01")
-				msg = fmt.Sprintf("⚠️ <b>Время матча изменено!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\n<s>Старое время: %s</s>\n⏰ Новое время: %s", match.TeamA, match.TeamB, oldTimeStr, timeStr)
+				msg = fmt.Sprintf("⚠️ <b>Время матча изменено!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\n<s>Старое время: %s</s>\n⏰ Новое время: %s",
+					match.TeamA, match.TeamB, oldTimeStr, timeStr)
 			}
 
-			// Находим всех, кому это интересно (объединяем подписчиков TeamA и TeamB без дубликатов)
+			// Находим всех, кому это интересно
 			usersA, _ := db.GetUsersByTeam(match.TeamA)
 			usersB, _ := db.GetUsersByTeam(match.TeamB)
 

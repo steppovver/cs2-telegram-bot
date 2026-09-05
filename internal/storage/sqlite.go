@@ -51,30 +51,37 @@ func (s *Storage) initTables() error {
 	return err
 }
 
-// ProcessMatch сверяет матч с базой. Возвращает флаги, если матч новый или время изменено.
-func (s *Storage) ProcessMatch(m api.Match) (isNew bool, timeChanged bool, oldTime time.Time, err error) {
+// ProcessMatch сверяет матч с базой. Возвращает флаги, если матч новый, время изменено или соперник изменился.
+func (s *Storage) ProcessMatch(m api.Match) (isNew bool, timeChanged bool, teamsChanged bool, oldTime time.Time, oldTeamA string, oldTeamB string, err error) {
 	var dbTimeUnix int64
-	err = s.db.QueryRow(`SELECT begin_at FROM matches WHERE id = ?`, m.ID).Scan(&dbTimeUnix)
+	var dbTeamA, dbTeamB string
+
+	// Запрашиваем сразу и время, и команды
+	err = s.db.QueryRow(`SELECT begin_at, team_a, team_b FROM matches WHERE id = ?`, m.ID).
+		Scan(&dbTimeUnix, &dbTeamA, &dbTeamB)
 
 	if err == sql.ErrNoRows {
 		// Совпадений нет — это совершенно новый матч
 		_, err = s.db.Exec(`INSERT INTO matches (id, team_a, team_b, begin_at) VALUES (?, ?, ?, ?)`,
 			m.ID, m.TeamA, m.TeamB, m.Time.Unix())
-		return true, false, time.Time{}, err
+		return true, false, false, time.Time{}, "", "", err
 	} else if err != nil {
-		return false, false, time.Time{}, err
+		return false, false, false, time.Time{}, "", "", err
 	}
 
-	// Матч найден, проверяем изменилось ли время
-	if dbTimeUnix != m.Time.Unix() {
-		// Обновляем запись в БД
+	timeChanged = dbTimeUnix != m.Time.Unix()
+	teamsChanged = (dbTeamA != m.TeamA) || (dbTeamB != m.TeamB)
+
+	// Если хоть что-то изменилось — обновляем БД
+	if timeChanged || teamsChanged {
 		_, err = s.db.Exec(`UPDATE matches SET begin_at = ?, team_a = ?, team_b = ? WHERE id = ?`,
 			m.Time.Unix(), m.TeamA, m.TeamB, m.ID)
-		return false, true, time.Unix(dbTimeUnix, 0), err
+
+		return false, timeChanged, teamsChanged, time.Unix(dbTimeUnix, 0), dbTeamA, dbTeamB, err
 	}
 
-	// Матч есть и время не изменилось
-	return false, false, time.Time{}, nil
+	// Матч есть и ничего не изменилось
+	return false, false, false, time.Time{}, "", "", nil
 }
 
 // GetUpcomingUserMatches достает из локальной БД актуальные матчи для команд пользователя
