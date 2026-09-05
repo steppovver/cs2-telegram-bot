@@ -1,0 +1,17 @@
+# Секреты и токены
+.env
+
+# База данных SQLite
+bot.db
+bot.db-journal
+bot.db-shm
+bot.db-wal
+
+# Скомпилированные бинарники
+cs2bot
+cs2bot.exe
+*.exe
+
+# Зависимости среды разработки
+.vscode/
+.idea/
