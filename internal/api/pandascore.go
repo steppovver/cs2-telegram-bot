@@ -29,16 +29,12 @@ type pandaMatch struct {
 	} `json:"opponents"`
 }
 
-// FetchMatchesByTeamIDs принимает массив ID команд и делает один общий запрос
 func FetchMatchesByTeamIDs(apiKey string, teamIDs []string) ([]Match, error) {
 	if len(teamIDs) == 0 {
 		return nil, nil
 	}
 
-	// Склеиваем массив в строку через запятую: "124523,130564,135177"
 	joinedIDs := strings.Join(teamIDs, ",")
-
-	// Обязательно увеличиваем per_page, так как матчей для 10 команд будет намного больше
 	url := fmt.Sprintf("https://api.pandascore.co/csgo/matches/upcoming?filter[opponent_id]=%s&filter[status]=not_started,postponed,running&sort=begin_at&per_page=100", joinedIDs)
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -48,10 +44,26 @@ func FetchMatchesByTeamIDs(apiKey string, teamIDs []string) ([]Match, error) {
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Accept", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
+	// 1. Увеличиваем таймаут до 20 секунд
+	client := &http.Client{Timeout: 20 * time.Second}
+
+	var resp *http.Response
+	var doErr error
+
+	// 2. Делаем до 3 попыток запроса
+	for attempt := 1; attempt <= 3; attempt++ {
+		resp, doErr = client.Do(req)
+		if doErr == nil {
+			break
+		}
+
+		if attempt < 3 {
+			time.Sleep(2 * time.Second)
+		}
+	}
+
+	if doErr != nil {
+		return nil, fmt.Errorf("ошибка запроса после 3 попыток: %w", doErr)
 	}
 	defer resp.Body.Close()
 
@@ -70,26 +82,18 @@ func FetchMatchesByTeamIDs(apiKey string, teamIDs []string) ([]Match, error) {
 			continue
 		}
 
-		// Задаем значения по умолчанию
-		teamA := "TBD"
-		teamB := "TBD"
-		teamAID := 0
-		teamBID := 0
+		teamA, teamB := "TBD", "TBD"
+		teamAID, teamBID := 0, 0
 
-		// Безопасно достаем первую команду, если она есть
 		if len(pm.Opponents) > 0 {
 			teamA = pm.Opponents[0].Opponent.Name
 			teamAID = pm.Opponents[0].Opponent.ID
 		}
-
-		// Безопасно достаем вторую команду, если она есть
 		if len(pm.Opponents) > 1 {
 			teamB = pm.Opponents[1].Opponent.Name
 			teamBID = pm.Opponents[1].Opponent.ID
 		}
 
-		// Пропускаем матч, только если вообще ни одной команды не известно
-		// (хотя при поиске по ID такое вряд ли придет, но лучше перестраховаться)
 		if teamAID == 0 && teamBID == 0 {
 			continue
 		}

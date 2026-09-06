@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"cs2bot/internal/api" // Замени на свое имя модуля, если нужно
+	"cs2bot/internal/api"
 
 	_ "modernc.org/sqlite"
 )
@@ -45,7 +45,7 @@ func (s *Storage) initTables() error {
 		team_a TEXT,
 		team_b TEXT,
 		begin_at INTEGER,
-		notified INTEGER DEFAULT 0 -- 0 = не отправляли, 1 = отправили
+		notified INTEGER DEFAULT 0
 	);`
 	if _, err := s.db.Exec(query); err != nil {
 		return err
@@ -59,17 +59,14 @@ func (s *Storage) initTables() error {
 	return nil
 }
 
-// ProcessMatch сверяет матч с базой. Возвращает флаги, если матч новый, время изменено или соперник изменился.
 func (s *Storage) ProcessMatch(m api.Match) (isNew bool, timeChanged bool, teamsChanged bool, oldTime time.Time, oldTeamA string, oldTeamB string, err error) {
 	var dbTimeUnix int64
 	var dbTeamA, dbTeamB string
 
-	// Запрашиваем сразу и время, и команды
 	err = s.db.QueryRow(`SELECT begin_at, team_a, team_b FROM matches WHERE id = ?`, m.ID).
 		Scan(&dbTimeUnix, &dbTeamA, &dbTeamB)
 
 	if err == sql.ErrNoRows {
-		// Совпадений нет — это совершенно новый матч
 		_, err = s.db.Exec(`INSERT INTO matches (id, team_a, team_b, begin_at) VALUES (?, ?, ?, ?)`,
 			m.ID, m.TeamA, m.TeamB, m.Time.Unix())
 		return true, false, false, time.Time{}, "", "", err
@@ -80,25 +77,20 @@ func (s *Storage) ProcessMatch(m api.Match) (isNew bool, timeChanged bool, teams
 	timeChanged = dbTimeUnix != m.Time.Unix()
 	teamsChanged = (dbTeamA != m.TeamA) || (dbTeamB != m.TeamB)
 
-	// Если хоть что-то изменилось — обновляем БД
 	if timeChanged || teamsChanged {
 		_, err = s.db.Exec(`UPDATE matches SET begin_at = ?, team_a = ?, team_b = ? WHERE id = ?`,
 			m.Time.Unix(), m.TeamA, m.TeamB, m.ID)
-
 		return false, timeChanged, teamsChanged, time.Unix(dbTimeUnix, 0), dbTeamA, dbTeamB, err
 	}
 
-	// Матч есть и ничего не изменилось
 	return false, false, false, time.Time{}, "", "", nil
 }
 
-// GetUpcomingUserMatches достает из локальной БД актуальные матчи для команд пользователя
 func (s *Storage) GetUpcomingUserMatches(subs []string) ([]api.Match, error) {
 	if len(subs) == 0 {
 		return nil, nil
 	}
 
-	// Берем из БД только матчи, которые еще не начались
 	rows, err := s.db.Query(`SELECT id, team_a, team_b, begin_at FROM matches WHERE begin_at > ? ORDER BY begin_at ASC`, time.Now().Unix())
 	if err != nil {
 		return nil, err
@@ -113,7 +105,6 @@ func (s *Storage) GetUpcomingUserMatches(subs []string) ([]api.Match, error) {
 			continue
 		}
 
-		// Фильтруем: оставляем только те матчи, где играет подписанная команда
 		for _, sub := range subs {
 			if strings.EqualFold(m.TeamA, sub) || strings.EqualFold(m.TeamB, sub) {
 				m.Time = time.Unix(unixTime, 0)
@@ -125,12 +116,9 @@ func (s *Storage) GetUpcomingUserMatches(subs []string) ([]api.Match, error) {
 	return matches, nil
 }
 
-// CleanOldMatches удаляет из базы матчи, которые начались более 24 часов назад
 func (s *Storage) CleanOldMatches() {
 	s.db.Exec(`DELETE FROM matches WHERE begin_at < ?`, time.Now().Add(-24*time.Hour).Unix())
 }
-
-// === СТАРЫЕ МЕТОДЫ ПОДПИСОК ОСТАЮТСЯ БЕЗ ИЗМЕНЕНИЙ ===
 
 func (s *Storage) Subscribe(userID int64, teamName string) error {
 	_, err := s.db.Exec(`INSERT OR IGNORE INTO users (id) VALUES (?)`, userID)
@@ -141,7 +129,6 @@ func (s *Storage) Subscribe(userID int64, teamName string) error {
 	return err
 }
 
-// Unsubscribe удаляет подписку пользователя на команду
 func (s *Storage) Unsubscribe(userID int64, teamName string) error {
 	_, err := s.db.Exec(`DELETE FROM subscriptions WHERE user_id = ? AND team_name = ?`, userID, teamName)
 	return err
@@ -201,12 +188,10 @@ func (s *Storage) GetAllSubscribedTeams() ([]string, error) {
 	return teams, rows.Err()
 }
 
-// GetMatchesForReminder достает матчи, которые начнутся в ближайшие 5 минут
 func (s *Storage) GetMatchesForReminder() ([]api.Match, error) {
 	now := time.Now().Unix()
 	fiveMinsLater := now + (5 * 60)
 
-	// Ищем матчи в окне от "сейчас" до "+5 минут", о которых еще не напоминали
 	query := `SELECT id, team_a, team_b, begin_at 
 	          FROM matches 
 	          WHERE begin_at > ? AND begin_at <= ? AND notified = 0`
@@ -230,7 +215,6 @@ func (s *Storage) GetMatchesForReminder() ([]api.Match, error) {
 	return matches, nil
 }
 
-// MarkMatchAsNotified отмечает, что напоминание успешно отправлено
 func (s *Storage) MarkMatchAsNotified(matchID int) error {
 	_, err := s.db.Exec(`UPDATE matches SET notified = 1 WHERE id = ?`, matchID)
 	return err
