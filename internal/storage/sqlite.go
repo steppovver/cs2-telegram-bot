@@ -133,6 +133,12 @@ func (s *Storage) Subscribe(userID int64, teamName string) error {
 	return err
 }
 
+// Unsubscribe удаляет подписку пользователя на команду
+func (s *Storage) Unsubscribe(userID int64, teamName string) error {
+	_, err := s.db.Exec(`DELETE FROM subscriptions WHERE user_id = ? AND team_name = ?`, userID, teamName)
+	return err
+}
+
 func (s *Storage) GetUsersByTeam(teamName string) ([]int64, error) {
 	rows, err := s.db.Query(`SELECT user_id FROM subscriptions WHERE team_name = ? COLLATE NOCASE`, teamName)
 	if err != nil {

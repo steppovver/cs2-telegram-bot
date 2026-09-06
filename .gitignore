@@ -11,6 +11,7 @@ bot.db-wal
 cs2bot
 cs2bot.exe
 *.exe
+deploy.sh
 
 # Зависимости среды разработки
 .vscode/
