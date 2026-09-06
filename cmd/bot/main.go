@@ -20,8 +20,8 @@ type TeamInfo struct {
 
 var SupportedTeams = []TeamInfo{
 	{ID: "124523", Name: "Spirit"},
-	{ID: "130564", Name: "Falcons"},
-	{ID: "135177", Name: "BC.Game"},
+	{ID: "130564", Name: "Team Falcons"},
+	{ID: "135177", Name: "BC.Game Esports"},
 	{ID: "3210", Name: "G2"},
 	{ID: "3212", Name: "FaZe"},
 	{ID: "3240", Name: "MOUZ"},
