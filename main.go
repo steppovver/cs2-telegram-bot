@@ -58,6 +58,9 @@ func main() {
 	// Запускаем умный поллер
 	go startPoller(b, db, pandaToken)
 
+	// Запускаем воркер напоминаний
+	go startMatchReminders(b, db)
+
 	// === ГЛАВНОЕ МЕНЮ ===
 	mainMenu := &telebot.ReplyMarkup{ResizeKeyboard: true}
 	btnSchedule := mainMenu.Text("📅 Узнать расписание")
@@ -287,6 +290,51 @@ func startPoller(bot *telebot.Bot, db *storage.Storage, pandaToken string) {
 
 	for range ticker.C {
 		updateRoutine()
+	}
+}
+
+func startMatchReminders(bot *telebot.Bot, db *storage.Storage) {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		// База сама фильтрует матчи, которые начнутся в ближайшие 5 минут
+		matches, err := db.GetMatchesForReminder()
+		if err != nil {
+			log.Printf("Ошибка получения матчей для напоминаний: %v", err)
+			continue
+		}
+
+		for _, match := range matches {
+			if match.TeamA == "TBD" || match.TeamB == "TBD" {
+				continue
+			}
+
+			// Сразу помечаем матч в БД, чтобы избежать дублей, если рассылка займет время
+			db.MarkMatchAsNotified(match.ID)
+
+			unixTime := match.Time.Unix()
+			fallback := match.Time.UTC().Format("15:04 UTC")
+			timeStr := fmt.Sprintf(`<tg-time unix="%d" format="t">%s</tg-time>`, unixTime, fallback)
+
+			msg := fmt.Sprintf("🔥 <b>Матч начнется с минуты на минуту!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\nНачало в %s",
+				match.TeamA, match.TeamB, timeStr)
+
+			usersA, _ := db.GetUsersByTeam(match.TeamA)
+			usersB, _ := db.GetUsersByTeam(match.TeamB)
+
+			uniqueUsers := make(map[int64]bool)
+			for _, u := range usersA {
+				uniqueUsers[u] = true
+			}
+			for _, u := range usersB {
+				uniqueUsers[u] = true
+			}
+
+			for userID := range uniqueUsers {
+				bot.Send(telebot.ChatID(userID), msg, telebot.ModeHTML)
+			}
+		}
 	}
 }
 

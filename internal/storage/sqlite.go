@@ -40,15 +40,23 @@ func (s *Storage) initTables() error {
 		team_name TEXT,
 		UNIQUE(user_id, team_name)
 	);
-	-- Новая таблица для хранения состояния матчей
 	CREATE TABLE IF NOT EXISTS matches (
 		id INTEGER PRIMARY KEY,
 		team_a TEXT,
 		team_b TEXT,
-		begin_at INTEGER -- Храним время в Unix timestamp (секунды)
+		begin_at INTEGER,
+		notified INTEGER DEFAULT 0 -- 0 = не отправляли, 1 = отправили
 	);`
-	_, err := s.db.Exec(query)
-	return err
+	if _, err := s.db.Exec(query); err != nil {
+		return err
+	}
+
+	_, err := s.db.Exec(`ALTER TABLE matches ADD COLUMN notified INTEGER DEFAULT 0;`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return fmt.Errorf("ошибка обновления структуры БД: %w", err)
+	}
+
+	return nil
 }
 
 // ProcessMatch сверяет матч с базой. Возвращает флаги, если матч новый, время изменено или соперник изменился.
@@ -191,6 +199,41 @@ func (s *Storage) GetAllSubscribedTeams() ([]string, error) {
 		teams = append(teams, team)
 	}
 	return teams, rows.Err()
+}
+
+// GetMatchesForReminder достает матчи, которые начнутся в ближайшие 5 минут
+func (s *Storage) GetMatchesForReminder() ([]api.Match, error) {
+	now := time.Now().Unix()
+	fiveMinsLater := now + (5 * 60)
+
+	// Ищем матчи в окне от "сейчас" до "+5 минут", о которых еще не напоминали
+	query := `SELECT id, team_a, team_b, begin_at 
+	          FROM matches 
+	          WHERE begin_at > ? AND begin_at <= ? AND notified = 0`
+
+	rows, err := s.db.Query(query, now, fiveMinsLater)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var matches []api.Match
+	for rows.Next() {
+		var m api.Match
+		var unixTime int64
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime); err != nil {
+			continue
+		}
+		m.Time = time.Unix(unixTime, 0)
+		matches = append(matches, m)
+	}
+	return matches, nil
+}
+
+// MarkMatchAsNotified отмечает, что напоминание успешно отправлено
+func (s *Storage) MarkMatchAsNotified(matchID int) error {
+	_, err := s.db.Exec(`UPDATE matches SET notified = 1 WHERE id = ?`, matchID)
+	return err
 }
 
 func (s *Storage) Close() error {
