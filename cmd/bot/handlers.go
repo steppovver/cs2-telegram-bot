@@ -118,6 +118,7 @@ func (app *Application) handleSearchPrompt(c telebot.Context) error {
 }
 
 func (app *Application) handleTextSearch(c telebot.Context) error {
+	defer c.Send("Выбери нужное действие в меню ниже:", mainMenu)
 	query := strings.TrimSpace(c.Message().Text)
 	if len(query) < 2 {
 		return c.Send("Введите хотя бы 2 символа для поиска.")
