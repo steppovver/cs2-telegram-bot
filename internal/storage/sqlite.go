@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -12,20 +13,48 @@ import (
 )
 
 type Storage struct {
-	db *sql.DB
+	db      *sql.DB // Подключение к bot.db (пользователи, подписки, матчи)
+	teamsDB *sql.DB // Подключение к teams.db (справочник команд и игроков)
 }
 
-func NewStorage(dbPath string) (*Storage, error) {
-	db, err := sql.Open("sqlite", dbPath)
+type SearchedTeam struct {
+	ID      int
+	Name    string
+	Players string
+}
+
+func NewStorage(botDbPath, teamsDbPath string) (*Storage, error) {
+	// Подключаемся к основной БД
+	db, err := sql.Open("sqlite", botDbPath)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка открытия БД: %w", err)
+		return nil, fmt.Errorf("ошибка открытия bot.db: %w", err)
 	}
-
 	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("ошибка подключения к БД: %w", err)
+		return nil, fmt.Errorf("ошибка подключения к bot.db: %w", err)
 	}
 
-	s := &Storage{db: db}
+	// Подключаемся к БД с командами
+	teamsDB, err := sql.Open("sqlite", teamsDbPath)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка открытия teams.db: %w", err)
+	}
+	if err := teamsDB.Ping(); err != nil {
+		return nil, fmt.Errorf("ошибка подключения к teams.db: %w", err)
+	}
+
+	// Отладочный вывод количества команд
+	var count int
+	if err := teamsDB.QueryRow(`SELECT COUNT(*) FROM teams`).Scan(&count); err == nil {
+		slog.Info("Подключение к teams.db", slog.Int("всего_команд", count))
+	} else {
+		slog.Error("Ошибка чтения из teams.db", slog.Any("error", err))
+	}
+
+	s := &Storage{
+		db:      db,
+		teamsDB: teamsDB,
+	}
+
 	if err := s.initTables(); err != nil {
 		return nil, err
 	}
@@ -220,6 +249,50 @@ func (s *Storage) MarkMatchAsNotified(matchID int) error {
 	return err
 }
 
+func (s *Storage) SearchTeams(query string) ([]SearchedTeam, error) {
+	rows, err := s.teamsDB.Query(`
+		SELECT t.id, t.name, GROUP_CONCAT(p.name, ', ') 
+		FROM teams t 
+		LEFT JOIN players p ON t.id = p.team_id 
+		WHERE t.name LIKE ? COLLATE NOCASE
+		GROUP BY t.id, t.name
+		LIMIT 10
+	`, "%"+query+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var teams []SearchedTeam
+	for rows.Next() {
+		var t SearchedTeam
+		var players sql.NullString
+		if err := rows.Scan(&t.ID, &t.Name, &players); err != nil {
+			continue
+		}
+		if players.Valid {
+			t.Players = players.String
+		}
+		teams = append(teams, t)
+	}
+	return teams, nil
+}
+
+// Получение ID команды из БД (обратите внимание: используем s.teamsDB)
+func (s *Storage) GetTeamIDByName(name string) (string, error) {
+	var id int
+	err := s.teamsDB.QueryRow(`SELECT id FROM teams WHERE name = ? COLLATE NOCASE`, name).Scan(&id)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d", id), nil
+}
+
 func (s *Storage) Close() error {
-	return s.db.Close()
+	err1 := s.db.Close()
+	err2 := s.teamsDB.Close()
+	if err1 != nil {
+		return err1
+	}
+	return err2
 }

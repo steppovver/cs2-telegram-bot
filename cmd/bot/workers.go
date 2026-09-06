@@ -55,10 +55,20 @@ func (app *Application) startPoller() {
 
 		var idsToFetch []string
 		for _, teamName := range subscribedTeams {
+			found := false
+			// 1. Ищем в хардкоде
 			for _, t := range SupportedTeams {
 				if strings.EqualFold(t.Name, teamName) {
 					idsToFetch = append(idsToFetch, t.ID)
+					found = true
 					break
+				}
+			}
+			// 2. Если нет в хардкоде, берем ID из базы данных
+			if !found {
+				id, err := app.db.GetTeamIDByName(teamName)
+				if err == nil && id != "" {
+					idsToFetch = append(idsToFetch, id)
 				}
 			}
 		}

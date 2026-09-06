@@ -30,7 +30,8 @@ var SupportedTeams = []TeamInfo{
 var (
 	mainMenu     = &telebot.ReplyMarkup{ResizeKeyboard: true}
 	btnSchedule  = mainMenu.Text("📅 Узнать расписание")
-	btnSubscribe = mainMenu.Text("🔔 Подписаться на команды")
+	btnSubscribe = mainMenu.Text("🔔 Подписки на команды")
+	btnSearch    = mainMenu.Text("🔍 Поиск команды")
 )
 
 type Application struct {
@@ -66,7 +67,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	db, err := storage.NewStorage("bot.db")
+	db, err := storage.NewStorage("bot.db", "teams.db")
 	if err != nil {
 		slog.Error("Ошибка БД", slog.Any("error", err))
 		os.Exit(1)
@@ -100,14 +101,16 @@ func main() {
 	mainMenu.Reply(
 		mainMenu.Row(btnSchedule),
 		mainMenu.Row(btnSubscribe),
+		mainMenu.Row(btnSearch),
 	)
 
 	b.Use(app.loggingMiddleware)
 
 	b.Handle("/start", app.handleStart)
-	b.Handle(telebot.OnText, app.handleStart) // Catch-all для любого текста
+	b.Handle(telebot.OnText, app.handleTextSearch)
 	b.Handle(&btnSchedule, app.handleSchedule)
 	b.Handle(&btnSubscribe, app.handleSubscribe)
+	b.Handle(&btnSearch, app.handleSearchPrompt)
 	b.Handle("\fsub_", app.handleToggleSub)
 
 	go app.startPoller()
