@@ -6,12 +6,12 @@ require (
 	github.com/joho/godotenv v1.5.1
 	gopkg.in/telebot.v3 v3.3.8
 	modernc.org/sqlite v1.58.0
+	github.com/lmittmann/tint v1.2.0
 )
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/lmittmann/tint v1.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
