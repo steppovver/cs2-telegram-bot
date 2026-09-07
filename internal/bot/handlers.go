@@ -1,4 +1,4 @@
-package main
+package bot
 
 import (
 	"fmt"
@@ -6,10 +6,12 @@ import (
 	"strings"
 	"time"
 
+	"cs2bot/internal/domain"
+
 	"gopkg.in/telebot.v3"
 )
 
-func (app *Application) loggingMiddleware(next telebot.HandlerFunc) telebot.HandlerFunc {
+func (b *Bot) loggingMiddleware(next telebot.HandlerFunc) telebot.HandlerFunc {
 	return func(c telebot.Context) error {
 		start := time.Now()
 		action := "message"
@@ -31,36 +33,33 @@ func (app *Application) loggingMiddleware(next telebot.HandlerFunc) telebot.Hand
 	}
 }
 
-func (app *Application) handleStart(c telebot.Context) error {
-	return c.Send("Привет! Выбери нужное действие в меню ниже:", mainMenu)
+func (b *Bot) handleStart(c telebot.Context) error {
+	return c.Send("Привет! Выбери нужное действие в меню ниже:", b.mainMenu)
 }
 
-func (app *Application) handleSubscribe(c telebot.Context) error {
+func (b *Bot) handleSubscribe(c telebot.Context) error {
 	userID := c.Sender().ID
-	subs, err := app.db.GetUserSubscriptions(userID)
+	subs, err := b.storage.GetUserSubscriptions(userID)
 	if err != nil {
 		slog.Error("Ошибка получения подписок", slog.Int64("user_id", userID), slog.Any("error", err))
 	}
 
-	// 1. Копируем базовый список команд (Топ)
-	displayTeams := make([]TeamInfo, len(SupportedTeams))
-	copy(displayTeams, SupportedTeams)
+	displayTeams := make([]domain.TeamInfo, len(b.supportedTeams))
+	copy(displayTeams, b.supportedTeams)
 
-	// 2. Добавляем персональные подписки пользователя, которых нет в базовом списке
 	for _, subName := range subs {
 		isBaseTeam := false
-		for _, baseTeam := range SupportedTeams {
+		for _, baseTeam := range b.supportedTeams {
 			if strings.EqualFold(baseTeam.Name, subName) {
 				isBaseTeam = true
 				break
 			}
 		}
 
-		// Если команды нет в базовом списке, достаем ее ID из базы и добавляем в меню
 		if !isBaseTeam {
-			teamID, err := app.db.GetTeamIDByName(subName)
+			teamID, err := b.storage.GetTeamIDByName(subName)
 			if err == nil && teamID != "" {
-				displayTeams = append(displayTeams, TeamInfo{
+				displayTeams = append(displayTeams, domain.TeamInfo{
 					ID:   teamID,
 					Name: subName,
 				})
@@ -68,23 +67,22 @@ func (app *Application) handleSubscribe(c telebot.Context) error {
 		}
 	}
 
-	// 3. Строим клавиатуру уже из расширенного списка
-	menu := buildTeamsKeyboard("sub_", displayTeams, subs)
+	menu := b.buildTeamsKeyboard("sub_", displayTeams, subs)
 	return c.Send("Выбери команды для получения уведомлений:", menu)
 }
 
-func (app *Application) handleSchedule(c telebot.Context) error {
+func (b *Bot) handleSchedule(c telebot.Context) error {
 	userID := c.Sender().ID
-	subs, err := app.db.GetUserSubscriptions(userID)
+	subs, err := b.storage.GetUserSubscriptions(userID)
 	if err != nil {
 		return c.Send("Произошла ошибка при обращении к базе данных.")
 	}
 
 	if len(subs) == 0 {
-		return c.Send("Вы еще не подписаны ни на одну команду.\nНажмите «🔔 Подписаться на команды».")
+		return c.Send("Вы еще не подписаны ни на одну команду.\nНажмите «🔔 Подписки на команды».")
 	}
 
-	matches, err := app.db.GetUpcomingUserMatches(subs)
+	matches, err := b.storage.GetUpcomingUserMatches(subs)
 	if err != nil {
 		return c.Send("Ошибка получения расписания.")
 	}
@@ -113,49 +111,46 @@ func (app *Application) handleSchedule(c telebot.Context) error {
 	return c.Send(sb.String(), telebot.ModeHTML)
 }
 
-func (app *Application) handleSearchPrompt(c telebot.Context) error {
+func (b *Bot) handleSearchPrompt(c telebot.Context) error {
 	return c.Send("Введите часть названия команды (например, Falcon):")
 }
 
-func (app *Application) handleTextSearch(c telebot.Context) error {
-	defer c.Send("Выбери нужное действие в меню ниже:", mainMenu)
+func (b *Bot) handleTextSearch(c telebot.Context) error {
 	query := strings.TrimSpace(c.Message().Text)
 	if len(query) < 2 {
 		return c.Send("Введите хотя бы 2 символа для поиска.")
 	}
 
-	teams, err := app.db.SearchTeams(query)
+	teams, err := b.storage.SearchTeams(query)
 	if err != nil || len(teams) == 0 {
-		return c.Send("Команды не найдены.")
+		return c.Send("Команды не найдены.", b.mainMenu)
 	}
 
-	userID := c.Sender().ID
-	subs, _ := app.db.GetUserSubscriptions(userID)
+	subs, _ := b.storage.GetUserSubscriptions(c.Sender().ID)
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("🔍 <b>Результаты поиска по \"%s\":</b>\n\n", query))
 
-	var teamsToDisplay []TeamInfo
+	var teamsToDisplay []domain.TeamInfo
 	for _, t := range teams {
 		sb.WriteString(fmt.Sprintf("🛡 <b>%s</b>\n", t.Name))
 		if t.Players != "" {
-			sb.WriteString(fmt.Sprintf("👥 Игроки: %s\n", t.Players))
+			sb.WriteString(fmt.Sprintf("👥 Игроки: %s\n\n", t.Players))
 		} else {
-			sb.WriteString("👥 Игроки: нет данных\n")
+			sb.WriteString("👥 Игроки: нет данных\n\n")
 		}
-		sb.WriteString("\n")
 
-		teamsToDisplay = append(teamsToDisplay, TeamInfo{
+		teamsToDisplay = append(teamsToDisplay, domain.TeamInfo{
 			ID:   fmt.Sprintf("%d", t.ID),
 			Name: t.Name,
 		})
 	}
 
-	menu := buildTeamsKeyboard("sub_", teamsToDisplay, subs)
+	menu := b.buildTeamsKeyboard("sub_", teamsToDisplay, subs)
 	return c.Send(sb.String(), telebot.ModeHTML, menu)
 }
 
-func (app *Application) handleToggleSub(c telebot.Context) error {
+func (b *Bot) handleToggleSub(c telebot.Context) error {
 	payload := c.Callback().Data
 	parts := strings.Split(payload, "|")
 	if len(parts) != 3 {
@@ -165,26 +160,25 @@ func (app *Application) handleToggleSub(c telebot.Context) error {
 	teamName := strings.ToUpper(parts[2])
 	userID := c.Sender().ID
 
-	subs, _ := app.db.GetUserSubscriptions(userID)
+	subs, _ := b.storage.GetUserSubscriptions(userID)
 	isSubbed := isTeamSubscribed(subs, teamName)
 
 	var toastMsg string
 	if isSubbed {
-		_ = app.db.Unsubscribe(userID, teamName)
+		_ = b.storage.Unsubscribe(userID, teamName)
 		toastMsg = fmt.Sprintf("Отписка от %s", teamName)
 	} else {
-		_ = app.db.Subscribe(userID, teamName)
+		_ = b.storage.Subscribe(userID, teamName)
 		toastMsg = fmt.Sprintf("Подписка на %s оформлена!", teamName)
 	}
 
-	c.Respond(&telebot.CallbackResponse{Text: toastMsg})
+	_ = c.Respond(&telebot.CallbackResponse{Text: toastMsg})
 
-	// Динамически обновляем текущую клавиатуру сообщения, а не рисуем дефолтную
 	markup := c.Message().ReplyMarkup
 	if markup != nil {
 		for i, row := range markup.InlineKeyboard {
 			for j, btn := range row {
-				if strings.Contains(btn.Data, payload) { // Нашли ту самую кнопку
+				if strings.Contains(btn.Data, payload) {
 					if isSubbed {
 						markup.InlineKeyboard[i][j].Text = strings.TrimPrefix(btn.Text, "✅ ")
 					} else {
@@ -198,16 +192,7 @@ func (app *Application) handleToggleSub(c telebot.Context) error {
 	return nil
 }
 
-func isTeamSubscribed(subs []string, team string) bool {
-	for _, s := range subs {
-		if strings.EqualFold(s, team) {
-			return true
-		}
-	}
-	return false
-}
-
-func buildTeamsKeyboard(actionPrefix string, teamsToDisplay []TeamInfo, userSubs []string) *telebot.ReplyMarkup {
+func (b *Bot) buildTeamsKeyboard(actionPrefix string, teamsToDisplay []domain.TeamInfo, userSubs []string) *telebot.ReplyMarkup {
 	menu := &telebot.ReplyMarkup{}
 	var rows []telebot.Row
 	var currentRow []telebot.Btn
@@ -231,4 +216,13 @@ func buildTeamsKeyboard(actionPrefix string, teamsToDisplay []TeamInfo, userSubs
 
 	menu.Inline(rows...)
 	return menu
+}
+
+func isTeamSubscribed(subs []string, team string) bool {
+	for _, s := range subs {
+		if strings.EqualFold(s, team) {
+			return true
+		}
+	}
+	return false
 }

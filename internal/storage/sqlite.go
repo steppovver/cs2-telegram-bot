@@ -7,42 +7,42 @@ import (
 	"strings"
 	"time"
 
-	"cs2bot/internal/api"
+	"cs2bot/internal/domain"
 
 	_ "modernc.org/sqlite"
 )
 
 type Storage struct {
-	db      *sql.DB // Подключение к bot.db (пользователи, подписки, матчи)
-	teamsDB *sql.DB // Подключение к teams.db (справочник команд и игроков)
-}
-
-type SearchedTeam struct {
-	ID      int
-	Name    string
-	Players string
+	db      *sql.DB
+	teamsDB *sql.DB
 }
 
 func NewStorage(botDbPath, teamsDbPath string) (*Storage, error) {
-	// Подключаемся к основной БД
-	db, err := sql.Open("sqlite", botDbPath)
+	// Подключение к bot.db с WAL и busy_timeout для предотвращения 'database is locked'
+	botDSN := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL", botDbPath)
+	db, err := sql.Open("sqlite", botDSN)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка открытия bot.db: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetConnMaxLifetime(time.Hour)
+
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("ошибка подключения к bot.db: %w", err)
 	}
 
-	// Подключаемся к БД с командами
-	teamsDB, err := sql.Open("sqlite", teamsDbPath)
+	// Подключение к teams.db в режиме read-only
+	teamsDSN := fmt.Sprintf("file:%s?mode=ro&_busy_timeout=5000", teamsDbPath)
+	teamsDB, err := sql.Open("sqlite", teamsDSN)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка открытия teams.db: %w", err)
 	}
+	teamsDB.SetMaxOpenConns(4)
+
 	if err := teamsDB.Ping(); err != nil {
 		return nil, fmt.Errorf("ошибка подключения к teams.db: %w", err)
 	}
 
-	// Отладочный вывод количества команд
 	var count int
 	if err := teamsDB.QueryRow(`SELECT COUNT(*) FROM teams`).Scan(&count); err == nil {
 		slog.Info("Подключение к teams.db", slog.Int("всего_команд", count))
@@ -88,7 +88,7 @@ func (s *Storage) initTables() error {
 	return nil
 }
 
-func (s *Storage) ProcessMatch(m api.Match) (isNew bool, timeChanged bool, teamsChanged bool, oldTime time.Time, oldTeamA string, oldTeamB string, err error) {
+func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, teamsChanged bool, oldTime time.Time, oldTeamA string, oldTeamB string, err error) {
 	var dbTimeUnix int64
 	var dbTeamA, dbTeamB string
 
@@ -115,34 +115,51 @@ func (s *Storage) ProcessMatch(m api.Match) (isNew bool, timeChanged bool, teams
 	return false, false, false, time.Time{}, "", "", nil
 }
 
-func (s *Storage) GetUpcomingUserMatches(subs []string) ([]api.Match, error) {
+func (s *Storage) GetUpcomingUserMatches(subs []string) ([]domain.Match, error) {
 	if len(subs) == 0 {
 		return nil, nil
 	}
 
-	rows, err := s.db.Query(`SELECT id, team_a, team_b, begin_at FROM matches WHERE begin_at > ? ORDER BY begin_at ASC`, time.Now().Unix())
+	placeholders := make([]string, len(subs))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	inClause := strings.Join(placeholders, ", ")
+
+	query := fmt.Sprintf(`
+		SELECT id, team_a, team_b, begin_at 
+		FROM matches 
+		WHERE begin_at > ? 
+		  AND (team_a COLLATE NOCASE IN (%s) OR team_b COLLATE NOCASE IN (%s))
+		ORDER BY begin_at ASC
+	`, inClause, inClause)
+
+	args := make([]any, 0, 1+len(subs)*2)
+	args = append(args, time.Now().Unix())
+	for _, sub := range subs {
+		args = append(args, sub)
+	}
+	for _, sub := range subs {
+		args = append(args, sub)
+	}
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var matches []api.Match
+	var matches []domain.Match
 	for rows.Next() {
-		var m api.Match
+		var m domain.Match
 		var unixTime int64
 		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime); err != nil {
 			continue
 		}
-
-		for _, sub := range subs {
-			if strings.EqualFold(m.TeamA, sub) || strings.EqualFold(m.TeamB, sub) {
-				m.Time = time.Unix(unixTime, 0)
-				matches = append(matches, m)
-				break
-			}
-		}
+		m.Time = time.Unix(unixTime, 0)
+		matches = append(matches, m)
 	}
-	return matches, nil
+	return matches, rows.Err()
 }
 
 func (s *Storage) CleanOldMatches() {
@@ -217,7 +234,7 @@ func (s *Storage) GetAllSubscribedTeams() ([]string, error) {
 	return teams, rows.Err()
 }
 
-func (s *Storage) GetMatchesForReminder() ([]api.Match, error) {
+func (s *Storage) GetMatchesForReminder() ([]domain.Match, error) {
 	now := time.Now().Unix()
 	fiveMinsLater := now + (5 * 60)
 
@@ -231,9 +248,9 @@ func (s *Storage) GetMatchesForReminder() ([]api.Match, error) {
 	}
 	defer rows.Close()
 
-	var matches []api.Match
+	var matches []domain.Match
 	for rows.Next() {
-		var m api.Match
+		var m domain.Match
 		var unixTime int64
 		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime); err != nil {
 			continue
@@ -241,7 +258,7 @@ func (s *Storage) GetMatchesForReminder() ([]api.Match, error) {
 		m.Time = time.Unix(unixTime, 0)
 		matches = append(matches, m)
 	}
-	return matches, nil
+	return matches, rows.Err()
 }
 
 func (s *Storage) MarkMatchAsNotified(matchID int) error {
@@ -249,7 +266,7 @@ func (s *Storage) MarkMatchAsNotified(matchID int) error {
 	return err
 }
 
-func (s *Storage) SearchTeams(query string) ([]SearchedTeam, error) {
+func (s *Storage) SearchTeams(query string) ([]domain.SearchedTeam, error) {
 	rows, err := s.teamsDB.Query(`
 		SELECT t.id, t.name, GROUP_CONCAT(p.name, ', ') 
 		FROM teams t 
@@ -263,9 +280,9 @@ func (s *Storage) SearchTeams(query string) ([]SearchedTeam, error) {
 	}
 	defer rows.Close()
 
-	var teams []SearchedTeam
+	var teams []domain.SearchedTeam
 	for rows.Next() {
-		var t SearchedTeam
+		var t domain.SearchedTeam
 		var players sql.NullString
 		if err := rows.Scan(&t.ID, &t.Name, &players); err != nil {
 			continue
@@ -275,10 +292,9 @@ func (s *Storage) SearchTeams(query string) ([]SearchedTeam, error) {
 		}
 		teams = append(teams, t)
 	}
-	return teams, nil
+	return teams, rows.Err()
 }
 
-// Получение ID команды из БД (обратите внимание: используем s.teamsDB)
 func (s *Storage) GetTeamIDByName(name string) (string, error) {
 	var id int
 	err := s.teamsDB.QueryRow(`SELECT id FROM teams WHERE name = ? COLLATE NOCASE`, name).Scan(&id)
