@@ -12,10 +12,10 @@ import (
 
 	"cs2bot/internal/api"
 	"cs2bot/internal/bot"
+	"cs2bot/internal/config"
 	"cs2bot/internal/domain"
 	"cs2bot/internal/storage"
 
-	"github.com/joho/godotenv"
 	"github.com/lmittmann/tint"
 	"gopkg.in/telebot.v3"
 )
@@ -30,11 +30,19 @@ var defaultTeams = []domain.TeamInfo{
 }
 
 func main() {
-	debug := flag.Bool("debug", false, "Включить DEBUG-логирование")
+	configPath := flag.String("config", "config.json", "Путь к файлу конфигурации")
 	flag.Parse()
 
+	// Загружаем конфигурацию
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		// Логгера еще нет, используем стандартный вывод ошибок
+		slog.Error("Не удалось загрузить конфигурацию", slog.String("path", *configPath), slog.Any("error", err))
+		os.Exit(1)
+	}
+
 	logLevel := slog.LevelInfo
-	if *debug {
+	if cfg.Debug {
 		logLevel = slog.LevelDebug
 	}
 
@@ -43,28 +51,23 @@ func main() {
 		TimeFormat: time.TimeOnly,
 	})))
 
-	if err := godotenv.Load(); err != nil {
-		slog.Warn("Файл .env не найден, используются системные переменные")
-	}
-
-	telegramToken := os.Getenv("TELEGRAM_TOKEN")
-	pandaToken := os.Getenv("PANDASCORE_TOKEN")
-	if telegramToken == "" || pandaToken == "" {
-		slog.Error("Отсутствуют необходимые переменные окружения (TELEGRAM_TOKEN, PANDASCORE_TOKEN)")
+	if cfg.TelegramToken == "" || cfg.PandaToken == "" {
+		slog.Error("Отсутствуют необходимые токены в файле конфигурации")
 		os.Exit(1)
 	}
 
-	db, err := storage.NewStorage("bot.db", "teams.db")
+	// Передаем пути к БД из конфига вместо хардкода
+	db, err := storage.NewStorage(cfg.BotDBPath, cfg.TeamsDBPath)
 	if err != nil {
 		slog.Error("Ошибка инициализации БД", slog.Any("error", err))
 		os.Exit(1)
 	}
 	defer db.Close()
 
-	pandaClient := api.NewClient(pandaToken)
+	pandaClient := api.NewClient(cfg.PandaToken)
 
 	tb, err := telebot.NewBot(telebot.Settings{
-		Token:  telegramToken,
+		Token:  cfg.TelegramToken,
 		Poller: &telebot.LongPoller{Timeout: 10 * time.Second},
 	})
 	if err != nil {

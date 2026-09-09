@@ -1,5 +1,6 @@
 # Секреты и токены
 .env
+config.json
 
 # База данных SQLite
 bot.db
