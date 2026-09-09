@@ -99,6 +99,13 @@ func main() {
 		botApp.StartMatchReminders(ctx)
 	}()
 
+	// Запускаем воркер глобальной рассылки
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		botApp.StartBroadcaster(ctx)
+	}()
+
 	// Telegram-бот запускается в отдельной горутине, т.к. Start() блокирует поток
 	go func() {
 		slog.Info("Telegram-бот успешно запущен")

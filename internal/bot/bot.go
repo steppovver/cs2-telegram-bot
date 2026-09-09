@@ -29,11 +29,18 @@ type PandaClient interface {
 	FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string) ([]domain.Match, error)
 }
 
+type BroadcastTask struct {
+	UserID int64
+	Text   string
+}
+
 type Bot struct {
 	telebot        *telebot.Bot
 	storage        Storage
 	panda          PandaClient
 	supportedTeams []domain.TeamInfo
+
+	broadcastCh chan BroadcastTask
 
 	mainMenu     *telebot.ReplyMarkup
 	btnSchedule  telebot.Btn
@@ -48,6 +55,7 @@ func New(b *telebot.Bot, s Storage, p PandaClient, baseTeams []domain.TeamInfo) 
 		storage:        s,
 		panda:          p,
 		supportedTeams: baseTeams,
+		broadcastCh:    make(chan BroadcastTask, 10000),
 		mainMenu:       menu,
 		btnSchedule:    menu.Text("📅 Узнать расписание"),
 		btnSubscribe:   menu.Text("🔔 Подписки на команды"),

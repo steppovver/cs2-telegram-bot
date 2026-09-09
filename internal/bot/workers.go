@@ -136,6 +136,26 @@ func (b *Bot) runRemindersCycle(ctx context.Context) {
 	}
 }
 
+func (b *Bot) StartBroadcaster(ctx context.Context) {
+	// Telegram разрешает 30 сообщений в секунду (глобально).
+	// Ограничиваем до 25 (тик каждые 40 мс) для надежности.
+	limiter := time.NewTicker(40 * time.Millisecond)
+	defer limiter.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Info("Воркер рассылок завершил работу")
+			return
+		case task := <-b.broadcastCh:
+			<-limiter.C // Ждем разрешения от тикера перед отправкой
+			if _, err := b.telebot.Send(telebot.ChatID(task.UserID), task.Text, telebot.ModeHTML); err != nil {
+				slog.Warn("Ошибка отправки", slog.Int64("user_id", task.UserID), slog.Any("error", err))
+			}
+		}
+	}
+}
+
 func (b *Bot) broadcastToFans(ctx context.Context, teamA, teamB, msg string) {
 	usersA, _ := b.storage.GetUsersByTeam(teamA)
 	usersB, _ := b.storage.GetUsersByTeam(teamB)
@@ -149,22 +169,15 @@ func (b *Bot) broadcastToFans(ctx context.Context, teamA, teamB, msg string) {
 		return
 	}
 
-	slog.Info("Рассылка уведомления",
+	slog.Info("Добавление в очередь рассылки",
 		slog.String("match", fmt.Sprintf("%s vs %s", teamA, teamB)),
 		slog.Int("recipients", len(uniqueUsers)))
-
-	limiter := time.NewTicker(35 * time.Millisecond) // ~28 сообщений/сек для защиты от лимитов Telegram
-	defer limiter.Stop()
 
 	for userID := range uniqueUsers {
 		select {
 		case <-ctx.Done():
-			slog.Warn("Рассылка прервана сигналом завершения")
 			return
-		case <-limiter.C:
-			if _, err := b.telebot.Send(telebot.ChatID(userID), msg, telebot.ModeHTML); err != nil {
-				slog.Warn("Ошибка отправки", slog.Int64("user_id", userID), slog.Any("error", err))
-			}
+		case b.broadcastCh <- BroadcastTask{UserID: userID, Text: msg}:
 		}
 	}
 }
