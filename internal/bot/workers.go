@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"gopkg.in/telebot.v3"
@@ -29,33 +28,31 @@ func (b *Bot) StartPoller(ctx context.Context) {
 
 func (b *Bot) runPollerCycle(ctx context.Context) {
 	slog.Debug("Запуск цикла обновления подписок")
+
+	// Получаем список названий всех команд, на которые подписаны пользователи
 	subscribedTeams, err := b.storage.GetAllSubscribedTeams()
 	if err != nil || len(subscribedTeams) == 0 {
 		return
 	}
 
+	// Делаем ОДИН быстрый запрос к SQLite для ВСЕХ команд
+	dbIDs, err := b.storage.GetTeamIDsByNames(subscribedTeams)
+	if err != nil {
+		slog.Error("Ошибка получения ID команд из БД", slog.Any("error", err))
+		return
+	}
+
+	// Собираем слайс ID (dbIDs у нас возвращает map[string]string)
 	var idsToFetch []string
-	for _, teamName := range subscribedTeams {
-		found := false
-		for _, t := range b.supportedTeams {
-			if strings.EqualFold(t.Name, teamName) {
-				idsToFetch = append(idsToFetch, t.ID)
-				found = true
-				break
-			}
-		}
-		if !found {
-			id, err := b.storage.GetTeamIDByName(teamName)
-			if err == nil && id != "" {
-				idsToFetch = append(idsToFetch, id)
-			}
-		}
+	for _, id := range dbIDs {
+		idsToFetch = append(idsToFetch, id)
 	}
 
 	if len(idsToFetch) == 0 {
 		return
 	}
 
+	// Отправляем ID в PandaScore API
 	matches, err := b.panda.FetchMatchesByTeamIDs(ctx, idsToFetch)
 	if err != nil {
 		slog.Error("Ошибка запроса матчей из API", slog.Any("error", err))

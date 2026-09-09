@@ -57,8 +57,20 @@ func (c *Client) FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string) ([
 
 	for attempt := 1; attempt <= 3; attempt++ {
 		resp, doErr = c.httpClient.Do(req)
+
 		if doErr == nil {
-			break
+			if resp.StatusCode == http.StatusOK {
+				break // Запрос успешен, выходим из цикла ретраев
+			}
+
+			// Если ошибка клиентская (например, 401 Unauthorized или 404), ретрай не поможет
+			if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
+				resp.Body.Close()
+				return nil, fmt.Errorf("API client error: %d", resp.StatusCode)
+			}
+
+			// Для 429 и 5xx закрываем тело ответа и идем на следующий круг
+			resp.Body.Close()
 		}
 
 		select {

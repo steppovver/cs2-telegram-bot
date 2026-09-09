@@ -89,16 +89,27 @@ func (s *Storage) initTables() error {
 }
 
 func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, teamsChanged bool, oldTime time.Time, oldTeamA string, oldTeamB string, err error) {
+	// Открываем транзакцию. При использовании WAL это безопасно сериализует запись
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, false, false, time.Time{}, "", "", err
+	}
+	defer tx.Rollback() // Автоматически откатит изменения, если не вызван tx.Commit()
+
 	var dbTimeUnix int64
 	var dbTeamA, dbTeamB string
 
-	err = s.db.QueryRow(`SELECT begin_at, team_a, team_b FROM matches WHERE id = ?`, m.ID).
+	err = tx.QueryRow(`SELECT begin_at, team_a, team_b FROM matches WHERE id = ?`, m.ID).
 		Scan(&dbTimeUnix, &dbTeamA, &dbTeamB)
 
 	if err == sql.ErrNoRows {
-		_, err = s.db.Exec(`INSERT INTO matches (id, team_a, team_b, begin_at) VALUES (?, ?, ?, ?)`,
+		_, err = tx.Exec(`INSERT INTO matches (id, team_a, team_b, begin_at) VALUES (?, ?, ?, ?)`,
 			m.ID, m.TeamA, m.TeamB, m.Time.Unix())
-		return true, false, false, time.Time{}, "", "", err
+		if err != nil {
+			return false, false, false, time.Time{}, "", "", err
+		}
+		tx.Commit()
+		return true, false, false, time.Time{}, "", "", nil
 	} else if err != nil {
 		return false, false, false, time.Time{}, "", "", err
 	}
@@ -107,12 +118,15 @@ func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, te
 	teamsChanged = (dbTeamA != m.TeamA) || (dbTeamB != m.TeamB)
 
 	if timeChanged || teamsChanged {
-		_, err = s.db.Exec(`UPDATE matches SET begin_at = ?, team_a = ?, team_b = ? WHERE id = ?`,
+		_, err = tx.Exec(`UPDATE matches SET begin_at = ?, team_a = ?, team_b = ? WHERE id = ?`,
 			m.Time.Unix(), m.TeamA, m.TeamB, m.ID)
-		return false, timeChanged, teamsChanged, time.Unix(dbTimeUnix, 0), dbTeamA, dbTeamB, err
+		if err != nil {
+			return false, false, false, time.Time{}, "", "", err
+		}
 	}
 
-	return false, false, false, time.Time{}, "", "", nil
+	tx.Commit()
+	return false, timeChanged, teamsChanged, time.Unix(dbTimeUnix, 0), dbTeamA, dbTeamB, nil
 }
 
 func (s *Storage) GetUpcomingUserMatches(subs []string) ([]domain.Match, error) {
@@ -302,6 +316,36 @@ func (s *Storage) GetTeamIDByName(name string) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%d", id), nil
+}
+
+func (s *Storage) GetTeamIDsByNames(names []string) (map[string]string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]string, len(names))
+	args := make([]any, len(names))
+	for i, name := range names {
+		placeholders[i] = "?"
+		args[i] = name
+	}
+
+	query := fmt.Sprintf(`SELECT id, name FROM teams WHERE name COLLATE NOCASE IN (%s)`, strings.Join(placeholders, ","))
+	rows, err := s.teamsDB.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]string)
+	for rows.Next() {
+		var id int
+		var name string
+		if err := rows.Scan(&id, &name); err == nil {
+			result[strings.ToLower(name)] = fmt.Sprintf("%d", id)
+		}
+	}
+	return result, rows.Err()
 }
 
 func (s *Storage) Close() error {
