@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -81,16 +82,39 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	go botApp.StartPoller(ctx)
-	go botApp.StartMatchReminders(ctx)
+	// Создаем WaitGroup для отслеживания горутин
+	var wg sync.WaitGroup
 
+	// Запускаем воркер обновления расписания
+	wg.Add(1)
+	go func() {
+		defer wg.Done() // Уменьшаем счетчик при выходе из воркера
+		botApp.StartPoller(ctx)
+	}()
+
+	// Запускаем воркер напоминаний о матчах
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		botApp.StartMatchReminders(ctx)
+	}()
+
+	// Telegram-бот запускается в отдельной горутине, т.к. Start() блокирует поток
 	go func() {
 		slog.Info("Telegram-бот успешно запущен")
 		botApp.Start()
 	}()
 
+	// Ждем сигнала прерывания (Ctrl+C или SIGTERM от Docker/Systemd)
 	<-ctx.Done()
-	slog.Info("Завершение работы сервиса...")
+	slog.Info("Получен сигнал завершения. Останавливаем бота...")
+
+	// Сначала останавливаем прием новых сообщений от пользователей
 	botApp.Stop()
+
+	slog.Info("Ожидание завершения фоновых задач...")
+	// Блокируем main, пока оба воркера не вызовут wg.Done()
+	wg.Wait()
+
 	slog.Info("Сервис успешно остановлен")
 }
