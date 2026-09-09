@@ -18,13 +18,15 @@ type Storage struct {
 }
 
 func NewStorage(botDbPath, teamsDbPath string) (*Storage, error) {
-	// Подключение к bot.db с WAL и busy_timeout для предотвращения 'database is locked'
 	botDSN := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL", botDbPath)
 	db, err := sql.Open("sqlite", botDSN)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка открытия bot.db: %w", err)
 	}
-	db.SetMaxOpenConns(1)
+
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(10)
+
 	db.SetConnMaxLifetime(time.Hour)
 
 	if err := db.Ping(); err != nil {
@@ -37,7 +39,9 @@ func NewStorage(botDbPath, teamsDbPath string) (*Storage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ошибка открытия teams.db: %w", err)
 	}
-	teamsDB.SetMaxOpenConns(4)
+
+	teamsDB.SetMaxOpenConns(10)
+	teamsDB.SetMaxIdleConns(10)
 
 	if err := teamsDB.Ping(); err != nil {
 		return nil, fmt.Errorf("ошибка подключения к teams.db: %w", err)
