@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -358,8 +359,6 @@ func (s *Storage) GetTeamIDsByNames(names []string) (map[string]string, error) {
 func (s *Storage) Close() error {
 	err1 := s.db.Close()
 	err2 := s.teamsDB.Close()
-	if err1 != nil {
-		return err1
-	}
-	return err2
+
+	return errors.Join(err1, err2)
 }
