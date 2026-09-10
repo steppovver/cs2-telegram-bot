@@ -160,18 +160,29 @@ func (b *Bot) handleToggleSub(c telebot.Context) error {
 	teamName := strings.ToUpper(parts[2])
 	userID := c.Sender().ID
 
-	subs, _ := b.storage.GetUserSubscriptions(userID)
+	subs, err := b.storage.GetUserSubscriptions(userID)
+	if err != nil {
+		slog.Error("Ошибка проверки подписок перед изменением", slog.Int64("user_id", userID), slog.Any("error", err))
+		return c.Respond(&telebot.CallbackResponse{Text: "Внутренняя ошибка сервера. Попробуйте позже."})
+	}
+
 	isSubbed := isTeamSubscribed(subs, teamName)
 
 	var toastMsg string
 	if isSubbed {
-		_ = b.storage.Unsubscribe(userID, teamName)
+		err = b.storage.Unsubscribe(userID, teamName)
 		toastMsg = fmt.Sprintf("Отписка от %s", teamName)
 	} else {
-		_ = b.storage.Subscribe(userID, teamName)
+		err = b.storage.Subscribe(userID, teamName)
 		toastMsg = fmt.Sprintf("Подписка на %s оформлена!", teamName)
 	}
 
+	if err != nil {
+		slog.Error("Ошибка изменения подписки в БД", slog.Int64("user_id", userID), slog.String("team", teamName), slog.Any("error", err))
+		return c.Respond(&telebot.CallbackResponse{Text: "Не удалось сохранить изменения."})
+	}
+
+	// Отправляем успешный toast-ответ
 	_ = c.Respond(&telebot.CallbackResponse{Text: toastMsg})
 
 	markup := c.Message().ReplyMarkup

@@ -157,8 +157,15 @@ func (b *Bot) StartBroadcaster(ctx context.Context) {
 }
 
 func (b *Bot) broadcastToFans(ctx context.Context, teamA, teamB, msg string) {
-	usersA, _ := b.storage.GetUsersByTeam(teamA)
-	usersB, _ := b.storage.GetUsersByTeam(teamB)
+	usersA, errA := b.storage.GetUsersByTeam(teamA)
+	if errA != nil {
+		slog.Error("Ошибка получения подписчиков команды", slog.String("team", teamA), slog.Any("error", errA))
+	}
+
+	usersB, errB := b.storage.GetUsersByTeam(teamB)
+	if errB != nil {
+		slog.Error("Ошибка получения подписчиков команды", slog.String("team", teamB), slog.Any("error", errB))
+	}
 
 	uniqueUsers := make(map[int64]struct{})
 	for _, u := range append(usersA, usersB...) {
