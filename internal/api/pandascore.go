@@ -43,87 +43,109 @@ func (c *Client) FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string) ([
 	}
 
 	joinedIDs := strings.Join(teamIDs, ",")
-	url := fmt.Sprintf("https://api.pandascore.co/csgo/matches/upcoming?filter[opponent_id]=%s&filter[status]=not_started,postponed,running&sort=begin_at&per_page=100", joinedIDs)
+	var allMatches []domain.Match
+	page := 1
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Accept", "application/json")
+	for {
+		// Добавляем параметр page=%d в URL
+		url := fmt.Sprintf("https://api.pandascore.co/csgo/matches/upcoming?filter[opponent_id]=%s&filter[status]=not_started,postponed,running&sort=begin_at&per_page=100&page=%d", joinedIDs, page)
 
-	var resp *http.Response
-	var doErr error
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		req.Header.Set("Accept", "application/json")
 
-	for attempt := 1; attempt <= 3; attempt++ {
-		resp, doErr = c.httpClient.Do(req)
+		var resp *http.Response
+		var doErr error
+		var requestSuccess bool
 
-		if doErr == nil {
-			if resp.StatusCode == http.StatusOK {
-				break // Запрос успешен, выходим из цикла ретраев
+		// Внутренний цикл ретраев для одной страницы
+		for attempt := 1; attempt <= 3; attempt++ {
+			resp, doErr = c.httpClient.Do(req)
+
+			if doErr == nil {
+				if resp.StatusCode == http.StatusOK {
+					requestSuccess = true
+					break // Успешно, выходим из цикла ретраев
+				}
+
+				if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
+					resp.Body.Close()
+					return nil, fmt.Errorf("API client error: %d", resp.StatusCode)
+				}
+				resp.Body.Close() // Закрываем перед следующей попыткой
 			}
 
-			// Если ошибка клиентская (например, 401 Unauthorized или 404), ретрай не поможет
-			if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
-				resp.Body.Close()
-				return nil, fmt.Errorf("API client error: %d", resp.StatusCode)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt) * time.Second):
+			}
+		}
+
+		if doErr != nil {
+			return nil, fmt.Errorf("ошибка сети при запросе страницы %d: %w", page, doErr)
+		}
+		if !requestSuccess {
+			return nil, fmt.Errorf("превышено количество попыток запроса для страницы %d", page)
+		}
+
+		// Декодируем текущую страницу
+		var pandaMatches []pandaMatch
+		err = json.NewDecoder(resp.Body).Decode(&pandaMatches)
+		resp.Body.Close() // Обязательно закрываем тело сразу после декодирования
+
+		if err != nil {
+			return nil, fmt.Errorf("ошибка парсинга страницы %d: %w", page, err)
+		}
+
+		// Если массив пустой, значит мы достигли конца данных
+		if len(pandaMatches) == 0 {
+			break
+		}
+
+		// Маппинг данных из API в доменную модель (без изменений)
+		for _, pm := range pandaMatches {
+			if pm.Status == "canceled" {
+				continue
 			}
 
-			// Для 429 и 5xx закрываем тело ответа и идем на следующий круг
-			resp.Body.Close()
+			teamA, teamB := "TBD", "TBD"
+			teamAID, teamBID := 0, 0
+
+			if len(pm.Opponents) > 0 {
+				teamA = pm.Opponents[0].Opponent.Name
+				teamAID = pm.Opponents[0].Opponent.ID
+			}
+			if len(pm.Opponents) > 1 {
+				teamB = pm.Opponents[1].Opponent.Name
+				teamBID = pm.Opponents[1].Opponent.ID
+			}
+
+			if teamAID == 0 && teamBID == 0 {
+				continue
+			}
+
+			allMatches = append(allMatches, domain.Match{
+				ID:      pm.ID,
+				TeamA:   teamA,
+				TeamB:   teamB,
+				TeamAID: teamAID,
+				TeamBID: teamBID,
+				Time:    pm.BeginAt,
+			})
 		}
 
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(time.Duration(attempt) * time.Second):
+		// Если API вернуло меньше элементов, чем размер страницы,
+		// значит следующей страницы точно нет — экономим один HTTP запрос
+		if len(pandaMatches) < 100 {
+			break
 		}
+
+		page++
 	}
 
-	if doErr != nil {
-		return nil, fmt.Errorf("ошибка запроса после 3 попыток: %w", doErr)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API error: %d", resp.StatusCode)
-	}
-
-	var pandaMatches []pandaMatch
-	if err := json.NewDecoder(resp.Body).Decode(&pandaMatches); err != nil {
-		return nil, err
-	}
-
-	var matches []domain.Match
-	for _, pm := range pandaMatches {
-		if pm.Status == "canceled" {
-			continue
-		}
-
-		teamA, teamB := "TBD", "TBD"
-		teamAID, teamBID := 0, 0
-
-		if len(pm.Opponents) > 0 {
-			teamA = pm.Opponents[0].Opponent.Name
-			teamAID = pm.Opponents[0].Opponent.ID
-		}
-		if len(pm.Opponents) > 1 {
-			teamB = pm.Opponents[1].Opponent.Name
-			teamBID = pm.Opponents[1].Opponent.ID
-		}
-
-		if teamAID == 0 && teamBID == 0 {
-			continue
-		}
-
-		matches = append(matches, domain.Match{
-			ID:      pm.ID,
-			TeamA:   teamA,
-			TeamB:   teamB,
-			TeamAID: teamAID,
-			TeamBID: teamBID,
-			Time:    pm.BeginAt,
-		})
-	}
-	return matches, nil
+	return allMatches, nil
 }
