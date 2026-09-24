@@ -56,8 +56,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Передаем пути к БД из конфига вместо хардкода
-	db, err := storage.NewStorage(cfg.BotDBPath, cfg.TeamsDBPath)
+	db, err := storage.NewStorage(cfg.DBPath)
 	if err != nil {
 		slog.Error("Ошибка инициализации БД", slog.Any("error", err))
 		os.Exit(1)

@@ -7,6 +7,10 @@ bot.db
 bot.db-journal
 bot.db-shm
 bot.db-wal
+teams.db
+teams.db-journal
+teams.db-shm
+teams.db-wal
 
 # Скомпилированные бинарники
 cs2bot

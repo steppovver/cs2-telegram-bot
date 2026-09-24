@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"log/slog"
@@ -11,8 +11,10 @@ import (
 	"os"
 	"time"
 
+	"cs2bot/internal/config"
+	"cs2bot/internal/storage"
+
 	"github.com/joho/godotenv"
-	_ "modernc.org/sqlite"
 )
 
 type PandaScorePlayer struct {
@@ -34,6 +36,9 @@ func main() {
 }
 
 func run() error {
+	configPath := flag.String("config", "config.json", "Путь к файлу конфигурации")
+	flag.Parse()
+
 	if err := godotenv.Load(); err != nil {
 		slog.Warn("Файл .env не найден, используем системные переменные")
 	}
@@ -43,25 +48,20 @@ func run() error {
 		return fmt.Errorf("переменная окружения PANDASCORE_TOKEN не установлена")
 	}
 
-	db, err := sql.Open("sqlite", "teams.db")
+	dbPath := "bot.db"
+	if cfg, err := config.Load(*configPath); err == nil && cfg.DBPath != "" {
+		dbPath = cfg.DBPath
+	} else if err != nil {
+		slog.Warn("Не удалось загрузить конфиг, используем bot.db", slog.Any("error", err))
+	}
+
+	db, err := storage.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("ошибка открытия БД: %w", err)
 	}
 	defer db.Close()
 
-	// Создаем таблицы для команд и игроков
-	schema := `
-	CREATE TABLE IF NOT EXISTS teams (
-		id INTEGER PRIMARY KEY,
-		name TEXT NOT NULL
-	);
-	CREATE TABLE IF NOT EXISTS players (
-		id INTEGER PRIMARY KEY,
-		team_id INTEGER NOT NULL,
-		name TEXT NOT NULL,
-		FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
-	);`
-	if _, err := db.Exec(schema); err != nil {
+	if err := storage.InitSchema(db); err != nil {
 		return fmt.Errorf("ошибка создания схемы БД: %w", err)
 	}
 

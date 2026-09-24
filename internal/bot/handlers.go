@@ -47,23 +47,21 @@ func (b *Bot) handleSubscribe(c telebot.Context) error {
 	displayTeams := make([]domain.TeamInfo, len(b.supportedTeams))
 	copy(displayTeams, b.supportedTeams)
 
-	for _, subName := range subs {
+	extraTeams, err := b.storage.GetUserSubscriptionTeams(userID)
+	if err != nil {
+		slog.Error("Ошибка получения команд подписок", slog.Int64("user_id", userID), slog.Any("error", err))
+	}
+
+	for _, extra := range extraTeams {
 		isBaseTeam := false
 		for _, baseTeam := range b.supportedTeams {
-			if strings.EqualFold(baseTeam.Name, subName) {
+			if strings.EqualFold(baseTeam.Name, extra.Name) {
 				isBaseTeam = true
 				break
 			}
 		}
-
 		if !isBaseTeam {
-			teamID, err := b.storage.GetTeamIDByName(subName)
-			if err == nil && teamID != "" {
-				displayTeams = append(displayTeams, domain.TeamInfo{
-					ID:   teamID,
-					Name: subName,
-				})
-			}
+			displayTeams = append(displayTeams, extra)
 		}
 	}
 
@@ -82,7 +80,7 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 		return c.Send("Вы еще не подписаны ни на одну команду.\nНажмите «🔔 Подписки на команды».")
 	}
 
-	matches, err := b.storage.GetUpcomingUserMatches(subs)
+	matches, err := b.storage.GetUpcomingUserMatches(userID)
 	if err != nil {
 		return c.Send("Ошибка получения расписания.")
 	}

@@ -1,7 +1,6 @@
 {
   "telegram_token": "YOUR_TELEGRAM_TOKEN",
   "pandascore_token": "YOUR_PANDASCORE_TOKEN",
-  "bot_db_path": "bot.db",
-  "teams_db_path": "teams.db",
+  "db_path": "bot.db",
   "debug": true
 }
