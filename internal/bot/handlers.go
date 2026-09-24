@@ -128,15 +128,27 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 					teamB = "<b>" + teamB + "</b>"
 				}
 			}
-			sb.WriteString(fmt.Sprintf("🔴 %s vs %s\n", teamA, teamB))
+			sb.WriteString(fmt.Sprintf("%s vs %s\n", teamA, teamB))
 		}
 		sb.WriteString("\n")
 	}
 
-	// Затем предстоящие
-	if len(matches) > 0 {
-		sb.WriteString("🎮 <b>Предстоящие матчи:</b>\n\n")
-		for _, match := range matches {
+	// Разделяем предстоящие на ближайшие (24ч) и отдалённые
+	oneDayLater := time.Now().Add(24 * time.Hour)
+	var upcoming []domain.Match
+	var further []domain.Match
+	for _, match := range matches {
+		if match.Time.Before(oneDayLater) {
+			upcoming = append(upcoming, match)
+		} else {
+			further = append(further, match)
+		}
+	}
+
+	// Ближайшие матчи
+	if len(upcoming) > 0 {
+		sb.WriteString("⚡ <b>Ближайшие матчи:</b>\n\n")
+		for _, match := range upcoming {
 			timeStr := formatTGTime(match.Time, "dt", "02.01 15:04 UTC")
 			teamA, teamB := match.TeamA, match.TeamB
 			for _, sub := range subs {
@@ -147,8 +159,28 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 					teamB = "<b>" + teamB + "</b>"
 				}
 			}
-			sb.WriteString(fmt.Sprintf("⏰ %s | %s vs %s\n", timeStr, teamA, teamB))
+			sb.WriteString(fmt.Sprintf("%s | %s vs %s\n", timeStr, teamA, teamB))
 		}
+		sb.WriteString("\n")
+	}
+
+	// Отдалённые матчи
+	if len(further) > 0 {
+		sb.WriteString("📅 <b>Предстоящие матчи:</b>\n\n")
+		for _, match := range further {
+			timeStr := formatTGTime(match.Time, "dt", "02.01 15:04 UTC")
+			teamA, teamB := match.TeamA, match.TeamB
+			for _, sub := range subs {
+				if sub.ID == match.TeamAID {
+					teamA = "<b>" + teamA + "</b>"
+				}
+				if sub.ID == match.TeamBID {
+					teamB = "<b>" + teamB + "</b>"
+				}
+			}
+			sb.WriteString(fmt.Sprintf("%s | %s vs %s\n", timeStr, teamA, teamB))
+		}
+		sb.WriteString("\n")
 	}
 
 	return c.Send(sb.String(), telebot.ModeHTML)
