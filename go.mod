@@ -3,10 +3,9 @@ module cs2bot
 go 1.25.0
 
 require (
-	github.com/joho/godotenv v1.5.1
+	github.com/lmittmann/tint v1.2.0
 	gopkg.in/telebot.v3 v3.3.8
 	modernc.org/sqlite v1.58.0
-	github.com/lmittmann/tint v1.2.0
 )
 
 require (

@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"time"
 
+	"cs2bot/internal/domain"
+
 	"gopkg.in/telebot.v3"
 )
 
@@ -29,30 +31,15 @@ func (b *Bot) StartPoller(ctx context.Context) {
 func (b *Bot) runPollerCycle(ctx context.Context) {
 	slog.Debug("Запуск цикла обновления подписок")
 
-	// Получаем список названий всех команд, на которые подписаны пользователи
-	subscribedTeams, err := b.storage.GetAllSubscribedTeams()
-	if err != nil || len(subscribedTeams) == 0 {
-		return
-	}
-
-	// Делаем ОДИН быстрый запрос к SQLite для ВСЕХ команд
-	dbIDs, err := b.storage.GetTeamIDsByNames(subscribedTeams)
+	idsToFetch, err := b.storage.GetSubscribedTeamIDs()
 	if err != nil {
 		slog.Error("Ошибка получения ID команд из БД", slog.Any("error", err))
 		return
 	}
-
-	// Собираем слайс ID (dbIDs у нас возвращает map[string]string)
-	var idsToFetch []string
-	for _, id := range dbIDs {
-		idsToFetch = append(idsToFetch, id)
-	}
-
 	if len(idsToFetch) == 0 {
 		return
 	}
 
-	// Отправляем ID в PandaScore API
 	matches, err := b.panda.FetchMatchesByTeamIDs(ctx, idsToFetch)
 	if err != nil {
 		slog.Error("Ошибка запроса матчей из API", slog.Any("error", err))
@@ -90,7 +77,7 @@ func (b *Bot) runPollerCycle(ctx context.Context) {
 				match.TeamA, match.TeamB, oldTimeStr, timeStr)
 		}
 
-		b.broadcastToFans(ctx, match.TeamA, match.TeamB, msg)
+		b.broadcastToFans(ctx, match, msg)
 	}
 
 	b.storage.CleanOldMatches()
@@ -132,7 +119,7 @@ func (b *Bot) runRemindersCycle(ctx context.Context) {
 		msg := fmt.Sprintf("🔥 <b>Матч начнется с минуты на минуту!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\nНачало в %s",
 			match.TeamA, match.TeamB, timeStr)
 
-		b.broadcastToFans(ctx, match.TeamA, match.TeamB, msg)
+		b.broadcastToFans(ctx, match, msg)
 	}
 }
 
@@ -156,31 +143,25 @@ func (b *Bot) StartBroadcaster(ctx context.Context) {
 	}
 }
 
-func (b *Bot) broadcastToFans(ctx context.Context, teamA, teamB, msg string) {
-	usersA, errA := b.storage.GetUsersByTeam(teamA)
-	if errA != nil {
-		slog.Error("Ошибка получения подписчиков команды", slog.String("team", teamA), slog.Any("error", errA))
+func (b *Bot) broadcastToFans(ctx context.Context, match domain.Match, msg string) {
+	users, err := b.storage.GetUsersByTeamIDs(match.TeamAID, match.TeamBID)
+	if err != nil {
+		slog.Error("Ошибка получения подписчиков матча",
+			slog.String("team_a", match.TeamA),
+			slog.String("team_b", match.TeamB),
+			slog.Any("error", err))
+		return
 	}
 
-	usersB, errB := b.storage.GetUsersByTeam(teamB)
-	if errB != nil {
-		slog.Error("Ошибка получения подписчиков команды", slog.String("team", teamB), slog.Any("error", errB))
-	}
-
-	uniqueUsers := make(map[int64]struct{})
-	for _, u := range append(usersA, usersB...) {
-		uniqueUsers[u] = struct{}{}
-	}
-
-	if len(uniqueUsers) == 0 {
+	if len(users) == 0 {
 		return
 	}
 
 	slog.Info("Добавление в очередь рассылки",
-		slog.String("match", fmt.Sprintf("%s vs %s", teamA, teamB)),
-		slog.Int("recipients", len(uniqueUsers)))
+		slog.String("match", fmt.Sprintf("%s vs %s", match.TeamA, match.TeamB)),
+		slog.Int("recipients", len(users)))
 
-	for userID := range uniqueUsers {
+	for _, userID := range users {
 		select {
 		case <-ctx.Done():
 			return

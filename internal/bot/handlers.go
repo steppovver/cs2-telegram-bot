@@ -3,6 +3,7 @@ package bot
 import (
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,26 +45,40 @@ func (b *Bot) handleSubscribe(c telebot.Context) error {
 		slog.Error("Ошибка получения подписок", slog.Int64("user_id", userID), slog.Any("error", err))
 	}
 
-	displayTeams := make([]domain.TeamInfo, len(b.supportedTeams))
-	copy(displayTeams, b.supportedTeams)
+	// Подтягиваем имена базовых команд из БД
+	ids := make([]int, len(b.defaultTeams))
+	for i, t := range b.defaultTeams {
+		ids[i] = t.ID
+	}
+	baseTeams, err := b.storage.GetTeamsByIDs(ids)
+	if err != nil {
+		slog.Error("Ошибка получения базовых команд", slog.Any("error", err))
+		baseTeams = nil
+	}
 
-	for _, subName := range subs {
-		isBaseTeam := false
-		for _, baseTeam := range b.supportedTeams {
-			if strings.EqualFold(baseTeam.Name, subName) {
-				isBaseTeam = true
-				break
-			}
+	// Собираем маппинг ID -> команда для быстрого поиска
+	teamMap := make(map[int]domain.TeamInfo)
+	for _, t := range baseTeams {
+		teamMap[t.ID] = t
+	}
+	for _, t := range subs {
+		teamMap[t.ID] = t
+	}
+
+	// Сначала базовые команды (в порядке конфига), потом пользовательские
+	seen := make(map[int]bool)
+	var displayTeams []domain.TeamInfo
+
+	for _, t := range b.defaultTeams {
+		if info, ok := teamMap[t.ID]; ok {
+			displayTeams = append(displayTeams, info)
+			seen[t.ID] = true
 		}
-
-		if !isBaseTeam {
-			teamID, err := b.storage.GetTeamIDByName(subName)
-			if err == nil && teamID != "" {
-				displayTeams = append(displayTeams, domain.TeamInfo{
-					ID:   teamID,
-					Name: subName,
-				})
-			}
+	}
+	for _, t := range subs {
+		if !seen[t.ID] {
+			displayTeams = append(displayTeams, t)
+			seen[t.ID] = true
 		}
 	}
 
@@ -82,7 +97,7 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 		return c.Send("Вы еще не подписаны ни на одну команду.\nНажмите «🔔 Подписки на команды».")
 	}
 
-	matches, err := b.storage.GetUpcomingUserMatches(subs)
+	matches, err := b.storage.GetUpcomingUserMatches(userID)
 	if err != nil {
 		return c.Send("Ошибка получения расписания.")
 	}
@@ -98,10 +113,10 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 		timeStr := formatTGTime(match.Time, "dt", "02.01 15:04 UTC")
 		teamA, teamB := match.TeamA, match.TeamB
 		for _, sub := range subs {
-			if strings.EqualFold(match.TeamA, sub) {
+			if sub.ID == match.TeamAID {
 				teamA = "<b>" + teamA + "</b>"
 			}
-			if strings.EqualFold(match.TeamB, sub) {
+			if sub.ID == match.TeamBID {
 				teamB = "<b>" + teamB + "</b>"
 			}
 		}
@@ -141,7 +156,7 @@ func (b *Bot) handleTextSearch(c telebot.Context) error {
 		}
 
 		teamsToDisplay = append(teamsToDisplay, domain.TeamInfo{
-			ID:   fmt.Sprintf("%d", t.ID),
+			ID:   t.ID,
 			Name: t.Name,
 		})
 	}
@@ -157,7 +172,11 @@ func (b *Bot) handleToggleSub(c telebot.Context) error {
 		return c.Respond(&telebot.CallbackResponse{Text: "Ошибка формата данных."})
 	}
 
-	teamName := strings.ToUpper(parts[2])
+	teamID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return c.Respond(&telebot.CallbackResponse{Text: "Ошибка идентификатора команды."})
+	}
+	teamName := parts[2]
 	userID := c.Sender().ID
 
 	subs, err := b.storage.GetUserSubscriptions(userID)
@@ -166,19 +185,19 @@ func (b *Bot) handleToggleSub(c telebot.Context) error {
 		return c.Respond(&telebot.CallbackResponse{Text: "Внутренняя ошибка сервера. Попробуйте позже."})
 	}
 
-	isSubbed := isTeamSubscribed(subs, teamName)
+	isSubbed := isTeamSubscribed(subs, int(teamID))
 
 	var toastMsg string
 	if isSubbed {
-		err = b.storage.Unsubscribe(userID, teamName)
+		err = b.storage.Unsubscribe(userID, teamID)
 		toastMsg = fmt.Sprintf("Отписка от %s", teamName)
 	} else {
-		err = b.storage.Subscribe(userID, teamName)
+		err = b.storage.Subscribe(userID, teamID, teamName)
 		toastMsg = fmt.Sprintf("Подписка на %s оформлена!", teamName)
 	}
 
 	if err != nil {
-		slog.Error("Ошибка изменения подписки в БД", slog.Int64("user_id", userID), slog.String("team", teamName), slog.Any("error", err))
+		slog.Error("Ошибка изменения подписки в БД", slog.Int64("user_id", userID), slog.Int64("team_id", teamID), slog.Any("error", err))
 		return c.Respond(&telebot.CallbackResponse{Text: "Не удалось сохранить изменения."})
 	}
 
@@ -203,15 +222,15 @@ func (b *Bot) handleToggleSub(c telebot.Context) error {
 	return nil
 }
 
-func (b *Bot) buildTeamsKeyboard(actionPrefix string, teamsToDisplay []domain.TeamInfo, userSubs []string) *telebot.ReplyMarkup {
+func (b *Bot) buildTeamsKeyboard(actionPrefix string, teamsToDisplay []domain.TeamInfo, userSubs []domain.TeamInfo) *telebot.ReplyMarkup {
 	menu := &telebot.ReplyMarkup{}
 	var rows []telebot.Row
 	var currentRow []telebot.Btn
 
 	for _, t := range teamsToDisplay {
-		payload := actionPrefix + "|" + t.ID + "|" + t.Name
+		payload := actionPrefix + "|" + strconv.Itoa(t.ID) + "|" + t.Name
 		btnText := t.Name
-		if isTeamSubscribed(userSubs, t.Name) {
+		if isTeamSubscribed(userSubs, t.ID) {
 			btnText = "✅ " + t.Name
 		}
 		currentRow = append(currentRow, menu.Data(btnText, actionPrefix, payload))
@@ -229,9 +248,9 @@ func (b *Bot) buildTeamsKeyboard(actionPrefix string, teamsToDisplay []domain.Te
 	return menu
 }
 
-func isTeamSubscribed(subs []string, team string) bool {
+func isTeamSubscribed(subs []domain.TeamInfo, teamID int) bool {
 	for _, s := range subs {
-		if strings.EqualFold(s, team) {
+		if s.ID == teamID {
 			return true
 		}
 	}

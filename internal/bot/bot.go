@@ -10,19 +10,18 @@ import (
 )
 
 type Storage interface {
-	GetUserSubscriptions(userID int64) ([]string, error)
-	GetAllSubscribedTeams() ([]string, error)
-	GetUpcomingUserMatches(subs []string) ([]domain.Match, error)
+	GetUserSubscriptions(userID int64) ([]domain.TeamInfo, error)
+	GetSubscribedTeamIDs() ([]string, error)
+	GetUpcomingUserMatches(userID int64) ([]domain.Match, error)
 	GetMatchesForReminder() ([]domain.Match, error)
-	GetUsersByTeam(teamName string) ([]int64, error)
-	GetTeamIDByName(name string) (string, error)
-	GetTeamIDsByNames(names []string) (map[string]string, error)
+	GetUsersByTeamIDs(teamAID, teamBID int) ([]int64, error)
 	ProcessMatch(m domain.Match) (isNew, timeChanged, teamsChanged bool, oldTime time.Time, oldTeamA, oldTeamB string, err error)
 	MarkMatchAsNotified(matchID int) error
 	CleanOldMatches()
-	Subscribe(userID int64, teamName string) error
-	Unsubscribe(userID int64, teamName string) error
+	Subscribe(userID, teamID int64, teamName string) error
+	Unsubscribe(userID, teamID int64) error
 	SearchTeams(query string) ([]domain.SearchedTeam, error)
+	GetTeamsByIDs(ids []int) ([]domain.TeamInfo, error)
 }
 
 type PandaClient interface {
@@ -38,7 +37,7 @@ type Bot struct {
 	telebot        *telebot.Bot
 	storage        Storage
 	panda          PandaClient
-	supportedTeams []domain.TeamInfo
+	defaultTeams   []domain.TeamInfo
 
 	broadcastCh chan BroadcastTask
 
@@ -48,14 +47,14 @@ type Bot struct {
 	btnSearch    telebot.Btn
 }
 
-func New(b *telebot.Bot, s Storage, p PandaClient, baseTeams []domain.TeamInfo) *Bot {
+func New(b *telebot.Bot, s Storage, p PandaClient, defaultTeams []domain.TeamInfo) *Bot {
 	menu := &telebot.ReplyMarkup{ResizeKeyboard: true}
 	botApp := &Bot{
-		telebot:        b,
-		storage:        s,
-		panda:          p,
-		supportedTeams: baseTeams,
-		broadcastCh:    make(chan BroadcastTask, 10000),
+		telebot:      b,
+		storage:      s,
+		panda:        p,
+		defaultTeams: defaultTeams,
+		broadcastCh:  make(chan BroadcastTask, 10000),
 		mainMenu:       menu,
 		btnSchedule:    menu.Text("📅 Узнать расписание"),
 		btnSubscribe:   menu.Text("🔔 Подписки на команды"),

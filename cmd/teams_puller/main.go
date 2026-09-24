@@ -2,67 +2,59 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
+	"flag"
 	"fmt"
-	"log"
 	"log/slog"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/joho/godotenv"
-	_ "modernc.org/sqlite"
+	"cs2bot/internal/config"
+	"cs2bot/internal/storage"
 )
 
-type PandaScorePlayer struct {
+type pandaScoreTeam struct {
+	ID      int64             `json:"id"`
+	Name    string            `json:"name"`
+	Players []pandaScorePlayer `json:"players"`
+}
+
+type pandaScorePlayer struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
 }
 
-type PandaScoreTeam struct {
-	ID      int64              `json:"id"`
-	Name    string             `json:"name"`
-	Players []PandaScorePlayer `json:"players"`
-}
-
 func main() {
-	if err := run(); err != nil {
-		log.Printf("Фатальная ошибка: %v", err)
+	configPath := flag.String("config", "config.json", "Путь к файлу конфигурации")
+	flag.Parse()
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		slog.Error("Не удалось загрузить конфигурацию", slog.String("path", *configPath), slog.Any("error", err))
 		os.Exit(1)
 	}
-}
 
-func run() error {
-	if err := godotenv.Load(); err != nil {
-		slog.Warn("Файл .env не найден, используем системные переменные")
+	if cfg.PandaToken == "" {
+		slog.Error("Отсутствует pandascore_token в конфиге")
+		os.Exit(1)
 	}
 
-	apiToken := os.Getenv("PANDASCORE_TOKEN")
-	if apiToken == "" {
-		return fmt.Errorf("переменная окружения PANDASCORE_TOKEN не установлена")
+	dbPath := cfg.DBPath
+	if dbPath == "" {
+		dbPath = "bot.db"
 	}
 
-	db, err := sql.Open("sqlite", "teams.db")
+	db, err := storage.Open(dbPath)
 	if err != nil {
-		return fmt.Errorf("ошибка открытия БД: %w", err)
+		slog.Error("Ошибка открытия БД", slog.Any("error", err))
+		os.Exit(1)
 	}
 	defer db.Close()
 
-	// Создаем таблицы для команд и игроков
-	schema := `
-	CREATE TABLE IF NOT EXISTS teams (
-		id INTEGER PRIMARY KEY,
-		name TEXT NOT NULL
-	);
-	CREATE TABLE IF NOT EXISTS players (
-		id INTEGER PRIMARY KEY,
-		team_id INTEGER NOT NULL,
-		name TEXT NOT NULL,
-		FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
-	);`
-	if _, err := db.Exec(schema); err != nil {
-		return fmt.Errorf("ошибка создания схемы БД: %w", err)
+	if err := storage.InitSchema(db); err != nil {
+		slog.Error("Ошибка создания схемы БД", slog.Any("error", err))
+		os.Exit(1)
 	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
@@ -77,86 +69,94 @@ func run() error {
 
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 		if err != nil {
-			return fmt.Errorf("ошибка создания запроса: %w", err)
+			slog.Error("Ошибка создания запроса", slog.Any("error", err))
+			os.Exit(1)
 		}
-		req.Header.Set("Authorization", "Bearer "+apiToken)
+		req.Header.Set("Authorization", "Bearer "+cfg.PandaToken)
 		req.Header.Set("Accept", "application/json")
 
 		resp, err := client.Do(req)
 		if err != nil {
-			return fmt.Errorf("ошибка выполнения HTTP-запроса на стр. %d: %w", page, err)
+			slog.Error("Ошибка HTTP-запроса", slog.Int("page", page), slog.Any("error", err))
+			os.Exit(1)
 		}
 
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
-			return fmt.Errorf("PandaScore вернул статус %d на стр. %d", resp.StatusCode, page)
+			slog.Error("PandaScore вернул статус", slog.Int("status", resp.StatusCode), slog.Int("page", page))
+			os.Exit(1)
 		}
 
-		var teams []PandaScoreTeam
+		var teams []pandaScoreTeam
 		err = json.NewDecoder(resp.Body).Decode(&teams)
 		resp.Body.Close()
 		if err != nil {
-			return fmt.Errorf("ошибка декодирования JSON: %w", err)
+			slog.Error("Ошибка декодирования JSON", slog.Any("error", err))
+			os.Exit(1)
 		}
 
 		if len(teams) == 0 {
-			break // Страницы закончились
+			break
 		}
 
-		// Записываем пачку в БД
 		tx, err := db.Begin()
 		if err != nil {
-			return fmt.Errorf("ошибка открытия транзакции: %w", err)
+			slog.Error("Ошибка открытия транзакции", slog.Any("error", err))
+			os.Exit(1)
 		}
 
 		teamStmt, err := tx.Prepare(`INSERT INTO teams (id, name) VALUES (?, ?)
 			ON CONFLICT(id) DO UPDATE SET name=excluded.name`)
 		if err != nil {
 			tx.Rollback()
-			return fmt.Errorf("ошибка подготовки teamStmt: %w", err)
+			slog.Error("Ошибка подготовки teamStmt", slog.Any("error", err))
+			os.Exit(1)
 		}
-		defer teamStmt.Close()
 
 		playerStmt, err := tx.Prepare(`INSERT INTO players (id, team_id, name) VALUES (?, ?, ?)
 			ON CONFLICT(id) DO UPDATE SET name=excluded.name, team_id=excluded.team_id`)
 		if err != nil {
 			tx.Rollback()
-			return fmt.Errorf("ошибка подготовки playerStmt: %w", err)
+			slog.Error("Ошибка подготовки playerStmt", slog.Any("error", err))
+			os.Exit(1)
 		}
-		defer playerStmt.Close()
 
 		insertedThisPage := 0
 		for _, team := range teams {
-			// Пропускаем команду, если у нее нет игроков в составе
 			if len(team.Players) == 0 {
 				continue
 			}
 
 			if _, err := teamStmt.Exec(team.ID, team.Name); err != nil {
 				tx.Rollback()
-				return fmt.Errorf("ошибка вставки команды %d: %w", team.ID, err)
+				slog.Error("Ошибка вставки команды", slog.Int64("team_id", team.ID), slog.Any("error", err))
+				os.Exit(1)
 			}
 
 			for _, p := range team.Players {
 				if _, err := playerStmt.Exec(p.ID, team.ID, p.Name); err != nil {
 					tx.Rollback()
-					return fmt.Errorf("ошибка вставки игрока %d: %w", p.ID, err)
+					slog.Error("Ошибка вставки игрока", slog.Int64("player_id", p.ID), slog.Any("error", err))
+					os.Exit(1)
 				}
 			}
 			insertedThisPage++
 		}
 
 		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("ошибка коммита транзакции: %w", err)
+			slog.Error("Ошибка коммита", slog.Any("error", err))
+			os.Exit(1)
 		}
+
+		teamStmt.Close()
+		playerStmt.Close()
 
 		totalTeams += insertedThisPage
 		fmt.Printf("Страница %d обработана (сохранено команд с составом: %d)...\n", page, insertedThisPage)
 
 		page++
-		time.Sleep(200 * time.Millisecond) // Соблюдаем rate limit
+		time.Sleep(200 * time.Millisecond)
 	}
 
 	fmt.Printf("Готово! Всего команд с составами сохранено: %d\n", totalTeams)
-	return nil
 }

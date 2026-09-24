@@ -13,21 +13,11 @@ import (
 	"cs2bot/internal/api"
 	"cs2bot/internal/bot"
 	"cs2bot/internal/config"
-	"cs2bot/internal/domain"
 	"cs2bot/internal/storage"
 
 	"github.com/lmittmann/tint"
 	"gopkg.in/telebot.v3"
 )
-
-var defaultTeams = []domain.TeamInfo{
-	{ID: "124523", Name: "Spirit"},
-	{ID: "130564", Name: "Team Falcons"},
-	{ID: "135177", Name: "BC.Game Esports"},
-	{ID: "3210", Name: "G2"},
-	{ID: "3212", Name: "FaZe"},
-	{ID: "3240", Name: "MOUZ"},
-}
 
 func main() {
 	configPath := flag.String("config", "config.json", "Путь к файлу конфигурации")
@@ -56,8 +46,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Передаем пути к БД из конфига вместо хардкода
-	db, err := storage.NewStorage(cfg.BotDBPath, cfg.TeamsDBPath)
+	db, err := storage.NewStorage(cfg.DBPath)
 	if err != nil {
 		slog.Error("Ошибка инициализации БД", slog.Any("error", err))
 		os.Exit(1)
@@ -79,7 +68,7 @@ func main() {
 		{Text: "start", Description: "Открыть главное меню"},
 	})
 
-	botApp := bot.New(tb, db, pandaClient, defaultTeams)
+	botApp := bot.New(tb, db, pandaClient, cfg.DefaultTeams)
 	botApp.RegisterHandlers()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
