@@ -47,8 +47,7 @@ func (c *Client) FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string) ([
 	page := 1
 
 	for {
-		// Добавляем параметр page=%d в URL
-		url := fmt.Sprintf("https://api.pandascore.co/csgo/matches/upcoming?filter[opponent_id]=%s&filter[status]=not_started,postponed,running&sort=begin_at&per_page=100&page=%d", joinedIDs, page)
+		url := fmt.Sprintf("https://api.pandascore.co/csgo/matches?filter[opponent_id]=%s&filter[status]=not_started,running&sort=begin_at&per_page=100&page=%d", joinedIDs, page)
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
@@ -135,6 +134,7 @@ func (c *Client) FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string) ([
 				TeamAID: teamAID,
 				TeamBID: teamBID,
 				Time:    pm.BeginAt,
+				Status:  pm.Status,
 			})
 		}
 

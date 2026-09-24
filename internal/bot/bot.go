@@ -13,11 +13,13 @@ type Storage interface {
 	GetUserSubscriptions(userID int64) ([]domain.TeamInfo, error)
 	GetSubscribedTeamIDs() ([]string, error)
 	GetUpcomingUserMatches(userID int64) ([]domain.Match, error)
+	GetLiveUserMatches(userID int64) ([]domain.Match, error)
 	GetMatchesForReminder() ([]domain.Match, error)
 	GetUsersByTeamIDs(teamAID, teamBID int) ([]int64, error)
-	ProcessMatch(m domain.Match) (isNew, timeChanged, teamsChanged bool, oldTime time.Time, oldTeamA, oldTeamB string, err error)
+	ProcessMatch(m domain.Match) (isNew, timeChanged, teamsChanged, statusChanged bool, oldTime time.Time, oldTeamA, oldTeamB, oldStatus string, err error)
 	MarkMatchAsNotified(matchID int) error
 	CleanOldMatches()
+	CleanStaleRunningMatches(apiMatchIDs map[int]bool)
 	Subscribe(userID, teamID int64, teamName string) error
 	Unsubscribe(userID, teamID int64) error
 	SearchTeams(query string) ([]domain.SearchedTeam, error)
@@ -34,10 +36,10 @@ type BroadcastTask struct {
 }
 
 type Bot struct {
-	telebot        *telebot.Bot
-	storage        Storage
-	panda          PandaClient
-	defaultTeams   []domain.TeamInfo
+	telebot      *telebot.Bot
+	storage      Storage
+	panda        PandaClient
+	defaultTeams []domain.TeamInfo
 
 	broadcastCh chan BroadcastTask
 
@@ -55,10 +57,10 @@ func New(b *telebot.Bot, s Storage, p PandaClient, defaultTeams []domain.TeamInf
 		panda:        p,
 		defaultTeams: defaultTeams,
 		broadcastCh:  make(chan BroadcastTask, 10000),
-		mainMenu:       menu,
-		btnSchedule:    menu.Text("📅 Узнать расписание"),
-		btnSubscribe:   menu.Text("🔔 Подписки на команды"),
-		btnSearch:      menu.Text("🔍 Поиск команды"),
+		mainMenu:     menu,
+		btnSchedule:  menu.Text("📅 Узнать расписание"),
+		btnSubscribe: menu.Text("🔔 Подписки на команды"),
+		btnSearch:    menu.Text("🔍 Поиск команды"),
 	}
 
 	botApp.mainMenu.Reply(

@@ -97,30 +97,58 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 		return c.Send("Вы еще не подписаны ни на одну команду.\nНажмите «🔔 Подписки на команды».")
 	}
 
+	// Загружаем live-матчи из БД
+	liveMatches, err := b.storage.GetLiveUserMatches(userID)
+	if err != nil {
+		slog.Error("Ошибка получения live-матчей", slog.Int64("user_id", userID), slog.Any("error", err))
+	}
+
+	// Загружаем предстоящие матчи из БД
 	matches, err := b.storage.GetUpcomingUserMatches(userID)
 	if err != nil {
 		return c.Send("Ошибка получения расписания.")
 	}
 
-	if len(matches) == 0 {
+	if len(liveMatches) == 0 && len(matches) == 0 {
 		return c.Send("Для ваших команд в ближайшее время игр не найдено.")
 	}
 
 	var sb strings.Builder
-	sb.WriteString("🎮 <b>Предстоящие матчи:</b>\n\n")
 
-	for _, match := range matches {
-		timeStr := formatTGTime(match.Time, "dt", "02.01 15:04 UTC")
-		teamA, teamB := match.TeamA, match.TeamB
-		for _, sub := range subs {
-			if sub.ID == match.TeamAID {
-				teamA = "<b>" + teamA + "</b>"
+	// Сначала live-матчи
+	if len(liveMatches) > 0 {
+		sb.WriteString("🔴 <b>Сейчас играют:</b>\n\n")
+		for _, match := range liveMatches {
+			teamA, teamB := match.TeamA, match.TeamB
+			for _, sub := range subs {
+				if sub.ID == match.TeamAID {
+					teamA = "<b>" + teamA + "</b>"
+				}
+				if sub.ID == match.TeamBID {
+					teamB = "<b>" + teamB + "</b>"
+				}
 			}
-			if sub.ID == match.TeamBID {
-				teamB = "<b>" + teamB + "</b>"
-			}
+			sb.WriteString(fmt.Sprintf("🔴 %s vs %s\n", teamA, teamB))
 		}
-		sb.WriteString(fmt.Sprintf("⏰ %s | %s vs %s\n", timeStr, teamA, teamB))
+		sb.WriteString("\n")
+	}
+
+	// Затем предстоящие
+	if len(matches) > 0 {
+		sb.WriteString("🎮 <b>Предстоящие матчи:</b>\n\n")
+		for _, match := range matches {
+			timeStr := formatTGTime(match.Time, "dt", "02.01 15:04 UTC")
+			teamA, teamB := match.TeamA, match.TeamB
+			for _, sub := range subs {
+				if sub.ID == match.TeamAID {
+					teamA = "<b>" + teamA + "</b>"
+				}
+				if sub.ID == match.TeamBID {
+					teamB = "<b>" + teamB + "</b>"
+				}
+			}
+			sb.WriteString(fmt.Sprintf("⏰ %s | %s vs %s\n", timeStr, teamA, teamB))
+		}
 	}
 
 	return c.Send(sb.String(), telebot.ModeHTML)

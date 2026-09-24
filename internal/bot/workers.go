@@ -29,7 +29,7 @@ func (b *Bot) StartPoller(ctx context.Context) {
 }
 
 func (b *Bot) runPollerCycle(ctx context.Context) {
-	slog.Debug("Запуск цикла обновления подписок")
+	slog.Debug("Запуск цикла обновления матчей")
 
 	idsToFetch, err := b.storage.GetSubscribedTeamIDs()
 	if err != nil {
@@ -40,20 +40,27 @@ func (b *Bot) runPollerCycle(ctx context.Context) {
 		return
 	}
 
+	// Обновляем предстоящие матчи
 	matches, err := b.panda.FetchMatchesByTeamIDs(ctx, idsToFetch)
 	if err != nil {
 		slog.Error("Ошибка запроса матчей из API", slog.Any("error", err))
 		return
 	}
 
+	// Собираем ID матчей из ответа API
+	apiMatchIDs := make(map[int]bool, len(matches))
+	for _, m := range matches {
+		apiMatchIDs[m.ID] = true
+	}
+
 	for _, match := range matches {
-		isNew, timeChanged, teamsChanged, oldTime, oldTeamA, oldTeamB, err := b.storage.ProcessMatch(match)
+		isNew, timeChanged, teamsChanged, statusChanged, oldTime, oldTeamA, oldTeamB, oldStatus, err := b.storage.ProcessMatch(match)
 		if err != nil {
 			slog.Error("Ошибка сохранения матча", slog.Int("match_id", match.ID), slog.Any("error", err))
 			continue
 		}
 
-		if (!isNew && !timeChanged && !teamsChanged) || match.TeamA == "TBD" || match.TeamB == "TBD" {
+		if (!isNew && !timeChanged && !teamsChanged && !statusChanged) || match.TeamA == "TBD" || match.TeamB == "TBD" {
 			continue
 		}
 
@@ -62,6 +69,9 @@ func (b *Bot) runPollerCycle(ctx context.Context) {
 
 		if isNew {
 			msg = fmt.Sprintf("🆕 <b>Добавлен новый матч!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s",
+				match.TeamA, match.TeamB, timeStr)
+		} else if match.Status == "running" && statusChanged && oldStatus != "running" {
+			msg = fmt.Sprintf("🔴 <b>Матч начался!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s",
 				match.TeamA, match.TeamB, timeStr)
 		} else if teamsChanged {
 			timeText := fmt.Sprintf("⏰ Время: %s", timeStr)
@@ -80,6 +90,7 @@ func (b *Bot) runPollerCycle(ctx context.Context) {
 		b.broadcastToFans(ctx, match, msg)
 	}
 
+	b.storage.CleanStaleRunningMatches(apiMatchIDs)
 	b.storage.CleanOldMatches()
 }
 
