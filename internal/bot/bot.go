@@ -10,17 +10,16 @@ import (
 )
 
 type Storage interface {
-	GetUserSubscriptions(userID int64) ([]string, error)
-	GetUserSubscriptionTeams(userID int64) ([]domain.TeamInfo, error)
+	GetUserSubscriptions(userID int64) ([]domain.TeamInfo, error)
 	GetSubscribedTeamIDs() ([]string, error)
 	GetUpcomingUserMatches(userID int64) ([]domain.Match, error)
 	GetMatchesForReminder() ([]domain.Match, error)
-	GetUsersByTeams(teamA, teamB string) ([]int64, error)
+	GetUsersByTeamIDs(teamAID, teamBID int) ([]int64, error)
 	ProcessMatch(m domain.Match) (isNew, timeChanged, teamsChanged bool, oldTime time.Time, oldTeamA, oldTeamB string, err error)
 	MarkMatchAsNotified(matchID int) error
 	CleanOldMatches()
-	Subscribe(userID int64, teamName string) error
-	Unsubscribe(userID int64, teamName string) error
+	Subscribe(userID, teamID int64, teamName string) error
+	Unsubscribe(userID, teamID int64) error
 	SearchTeams(query string) ([]domain.SearchedTeam, error)
 }
 

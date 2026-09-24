@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"time"
 
+	"cs2bot/internal/domain"
+
 	"gopkg.in/telebot.v3"
 )
 
@@ -75,7 +77,7 @@ func (b *Bot) runPollerCycle(ctx context.Context) {
 				match.TeamA, match.TeamB, oldTimeStr, timeStr)
 		}
 
-		b.broadcastToFans(ctx, match.TeamA, match.TeamB, msg)
+		b.broadcastToFans(ctx, match, msg)
 	}
 
 	b.storage.CleanOldMatches()
@@ -117,7 +119,7 @@ func (b *Bot) runRemindersCycle(ctx context.Context) {
 		msg := fmt.Sprintf("🔥 <b>Матч начнется с минуты на минуту!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\nНачало в %s",
 			match.TeamA, match.TeamB, timeStr)
 
-		b.broadcastToFans(ctx, match.TeamA, match.TeamB, msg)
+		b.broadcastToFans(ctx, match, msg)
 	}
 }
 
@@ -141,12 +143,12 @@ func (b *Bot) StartBroadcaster(ctx context.Context) {
 	}
 }
 
-func (b *Bot) broadcastToFans(ctx context.Context, teamA, teamB, msg string) {
-	users, err := b.storage.GetUsersByTeams(teamA, teamB)
+func (b *Bot) broadcastToFans(ctx context.Context, match domain.Match, msg string) {
+	users, err := b.storage.GetUsersByTeamIDs(match.TeamAID, match.TeamBID)
 	if err != nil {
 		slog.Error("Ошибка получения подписчиков матча",
-			slog.String("team_a", teamA),
-			slog.String("team_b", teamB),
+			slog.String("team_a", match.TeamA),
+			slog.String("team_b", match.TeamB),
 			slog.Any("error", err))
 		return
 	}
@@ -156,7 +158,7 @@ func (b *Bot) broadcastToFans(ctx context.Context, teamA, teamB, msg string) {
 	}
 
 	slog.Info("Добавление в очередь рассылки",
-		slog.String("match", fmt.Sprintf("%s vs %s", teamA, teamB)),
+		slog.String("match", fmt.Sprintf("%s vs %s", match.TeamA, match.TeamB)),
 		slog.Int("recipients", len(users)))
 
 	for _, userID := range users {
