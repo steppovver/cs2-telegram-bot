@@ -3,13 +3,16 @@ package config
 import (
 	"encoding/json"
 	"os"
+
+	"cs2bot/internal/domain"
 )
 
 type Config struct {
-	TelegramToken string `json:"telegram_token"`
-	PandaToken    string `json:"pandascore_token"`
-	DBPath        string `json:"db_path"`
-	Debug         bool   `json:"debug"`
+	TelegramToken string              `json:"telegram_token"`
+	PandaToken    string              `json:"pandascore_token"`
+	DBPath        string              `json:"db_path"`
+	Debug         bool                `json:"debug"`
+	DefaultTeams  []domain.TeamInfo   `json:"default_teams"`
 }
 
 type configFile struct {

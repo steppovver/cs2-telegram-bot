@@ -21,6 +21,7 @@ type Storage interface {
 	Subscribe(userID, teamID int64, teamName string) error
 	Unsubscribe(userID, teamID int64) error
 	SearchTeams(query string) ([]domain.SearchedTeam, error)
+	GetTeamsByIDs(ids []int) ([]domain.TeamInfo, error)
 }
 
 type PandaClient interface {
@@ -36,7 +37,7 @@ type Bot struct {
 	telebot        *telebot.Bot
 	storage        Storage
 	panda          PandaClient
-	supportedTeams []domain.TeamInfo
+	defaultTeams   []domain.TeamInfo
 
 	broadcastCh chan BroadcastTask
 
@@ -46,14 +47,14 @@ type Bot struct {
 	btnSearch    telebot.Btn
 }
 
-func New(b *telebot.Bot, s Storage, p PandaClient, baseTeams []domain.TeamInfo) *Bot {
+func New(b *telebot.Bot, s Storage, p PandaClient, defaultTeams []domain.TeamInfo) *Bot {
 	menu := &telebot.ReplyMarkup{ResizeKeyboard: true}
 	botApp := &Bot{
-		telebot:        b,
-		storage:        s,
-		panda:          p,
-		supportedTeams: baseTeams,
-		broadcastCh:    make(chan BroadcastTask, 10000),
+		telebot:      b,
+		storage:      s,
+		panda:        p,
+		defaultTeams: defaultTeams,
+		broadcastCh:  make(chan BroadcastTask, 10000),
 		mainMenu:       menu,
 		btnSchedule:    menu.Text("📅 Узнать расписание"),
 		btnSubscribe:   menu.Text("🔔 Подписки на команды"),

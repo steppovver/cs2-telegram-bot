@@ -12,7 +12,7 @@ type Match struct {
 }
 
 type TeamInfo struct {
-	ID   string
+	ID   int
 	Name string
 }
 

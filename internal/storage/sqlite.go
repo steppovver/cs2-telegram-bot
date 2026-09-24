@@ -412,10 +412,10 @@ func (s *Storage) GetUserSubscriptions(userID int64) ([]domain.TeamInfo, error) 
 		var id int
 		var name string
 		if err := rows.Scan(&id, &name); err != nil {
-			return nil, err
+			continue
 		}
 		teams = append(teams, domain.TeamInfo{
-			ID:   fmt.Sprintf("%d", id),
+			ID:   id,
 			Name: name,
 		})
 	}
@@ -500,6 +500,40 @@ func (s *Storage) SearchTeams(query string) ([]domain.SearchedTeam, error) {
 			t.Players = players.String
 		}
 		teams = append(teams, t)
+	}
+	return teams, rows.Err()
+}
+
+func (s *Storage) GetTeamsByIDs(ids []int) ([]domain.TeamInfo, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	args := make([]any, len(ids))
+	placeholders := make([]string, len(ids))
+	for i, id := range ids {
+		args[i] = id
+		placeholders[i] = "?"
+	}
+
+	query := fmt.Sprintf("SELECT id, name FROM teams WHERE id IN (%s)", strings.Join(placeholders, ","))
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var teams []domain.TeamInfo
+	for rows.Next() {
+		var id int
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			continue
+		}
+		teams = append(teams, domain.TeamInfo{
+			ID:   id,
+			Name: name,
+		})
 	}
 	return teams, rows.Err()
 }

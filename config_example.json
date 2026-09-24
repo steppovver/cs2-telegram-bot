@@ -2,5 +2,13 @@
   "telegram_token": "YOUR_TELEGRAM_TOKEN",
   "pandascore_token": "YOUR_PANDASCORE_TOKEN",
   "db_path": "bot.db",
-  "debug": true
+  "debug": true,
+  "default_teams": [
+    { "id": 124523,  "name": "Spirit" },
+    { "id": 130564,  "name": "Team Falcons" },
+    { "id": 135177,  "name": "BC.Game Esports" },
+    { "id": 3210,    "name": "G2" },
+    { "id": 3212,    "name": "FaZe" },
+    { "id": 3240,    "name": "MOUZ" }
+  ]
 }

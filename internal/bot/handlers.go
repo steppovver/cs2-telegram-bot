@@ -45,19 +45,40 @@ func (b *Bot) handleSubscribe(c telebot.Context) error {
 		slog.Error("Ошибка получения подписок", slog.Int64("user_id", userID), slog.Any("error", err))
 	}
 
-	displayTeams := make([]domain.TeamInfo, len(b.supportedTeams))
-	copy(displayTeams, b.supportedTeams)
+	// Подтягиваем имена базовых команд из БД
+	ids := make([]int, len(b.defaultTeams))
+	for i, t := range b.defaultTeams {
+		ids[i] = t.ID
+	}
+	baseTeams, err := b.storage.GetTeamsByIDs(ids)
+	if err != nil {
+		slog.Error("Ошибка получения базовых команд", slog.Any("error", err))
+		baseTeams = nil
+	}
 
-	for _, extra := range subs {
-		isBaseTeam := false
-		for _, baseTeam := range b.supportedTeams {
-			if baseTeam.ID == extra.ID {
-				isBaseTeam = true
-				break
-			}
+	// Собираем маппинг ID -> команда для быстрого поиска
+	teamMap := make(map[int]domain.TeamInfo)
+	for _, t := range baseTeams {
+		teamMap[t.ID] = t
+	}
+	for _, t := range subs {
+		teamMap[t.ID] = t
+	}
+
+	// Сначала базовые команды (в порядке конфига), потом пользовательские
+	seen := make(map[int]bool)
+	var displayTeams []domain.TeamInfo
+
+	for _, t := range b.defaultTeams {
+		if info, ok := teamMap[t.ID]; ok {
+			displayTeams = append(displayTeams, info)
+			seen[t.ID] = true
 		}
-		if !isBaseTeam {
-			displayTeams = append(displayTeams, extra)
+	}
+	for _, t := range subs {
+		if !seen[t.ID] {
+			displayTeams = append(displayTeams, t)
+			seen[t.ID] = true
 		}
 	}
 
@@ -92,10 +113,10 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 		timeStr := formatTGTime(match.Time, "dt", "02.01 15:04 UTC")
 		teamA, teamB := match.TeamA, match.TeamB
 		for _, sub := range subs {
-			if sub.ID == strconv.Itoa(match.TeamAID) {
+			if sub.ID == match.TeamAID {
 				teamA = "<b>" + teamA + "</b>"
 			}
-			if sub.ID == strconv.Itoa(match.TeamBID) {
+			if sub.ID == match.TeamBID {
 				teamB = "<b>" + teamB + "</b>"
 			}
 		}
@@ -135,7 +156,7 @@ func (b *Bot) handleTextSearch(c telebot.Context) error {
 		}
 
 		teamsToDisplay = append(teamsToDisplay, domain.TeamInfo{
-			ID:   fmt.Sprintf("%d", t.ID),
+			ID:   t.ID,
 			Name: t.Name,
 		})
 	}
@@ -164,7 +185,7 @@ func (b *Bot) handleToggleSub(c telebot.Context) error {
 		return c.Respond(&telebot.CallbackResponse{Text: "Внутренняя ошибка сервера. Попробуйте позже."})
 	}
 
-	isSubbed := isTeamSubscribed(subs, parts[1])
+	isSubbed := isTeamSubscribed(subs, int(teamID))
 
 	var toastMsg string
 	if isSubbed {
@@ -207,7 +228,7 @@ func (b *Bot) buildTeamsKeyboard(actionPrefix string, teamsToDisplay []domain.Te
 	var currentRow []telebot.Btn
 
 	for _, t := range teamsToDisplay {
-		payload := actionPrefix + "|" + t.ID + "|" + t.Name
+		payload := actionPrefix + "|" + strconv.Itoa(t.ID) + "|" + t.Name
 		btnText := t.Name
 		if isTeamSubscribed(userSubs, t.ID) {
 			btnText = "✅ " + t.Name
@@ -227,7 +248,7 @@ func (b *Bot) buildTeamsKeyboard(actionPrefix string, teamsToDisplay []domain.Te
 	return menu
 }
 
-func isTeamSubscribed(subs []domain.TeamInfo, teamID string) bool {
+func isTeamSubscribed(subs []domain.TeamInfo, teamID int) bool {
 	for _, s := range subs {
 		if s.ID == teamID {
 			return true
