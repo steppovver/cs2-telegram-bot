@@ -14,7 +14,7 @@ teams.db-wal
 
 # Скомпилированные бинарники
 cs2bot
-
+teams_puller
 cs2bot.exe
 *.exe
 deploy.sh
