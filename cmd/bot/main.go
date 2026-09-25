@@ -68,7 +68,7 @@ func main() {
 		{Text: "start", Description: "Открыть главное меню"},
 	})
 
-	botApp := bot.New(tb, db, pandaClient, cfg.DefaultTeams)
+	botApp := bot.New(tb, db, pandaClient, cfg.DefaultTeams, cfg.DigestPresetHours)
 	botApp.RegisterHandlers()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -96,6 +96,13 @@ func main() {
 	go func() {
 		defer wg.Done()
 		botApp.StartBroadcaster(ctx)
+	}()
+
+	// Запускаем воркер ежедневного дайджеста
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		botApp.StartDailyDigest(ctx)
 	}()
 
 	// Telegram-бот запускается в отдельной горутине, т.к. Start() блокирует поток

@@ -2,8 +2,10 @@ package bot
 
 import (
 	"context"
+	"sync"
 	"time"
 
+	"cs2bot/internal/config"
 	"cs2bot/internal/domain"
 
 	"gopkg.in/telebot.v3"
@@ -24,6 +26,12 @@ type Storage interface {
 	Unsubscribe(userID, teamID int64) error
 	SearchTeams(query string) ([]domain.SearchedTeam, error)
 	GetTeamsByIDs(ids []int) ([]domain.TeamInfo, error)
+	GetDigestSettings(userID int64) (domain.DigestSettings, error)
+	SetDigestEnabled(userID int64, enabled bool) error
+	SetDigestHour(userID int64, hour int) error
+	GetDigestDueUsers(hour int, today string) ([]int64, error)
+	MarkDigestSent(userID int64, date string) error
+	GetDigestMatches(userID int64, fromUnix, toUnix int64) ([]domain.Match, error)
 }
 
 type PandaClient interface {
@@ -47,26 +55,36 @@ type Bot struct {
 	btnSchedule  telebot.Btn
 	btnSubscribe telebot.Btn
 	btnSearch    telebot.Btn
+	btnDigest    telebot.Btn
+
+	awaitingHour   map[int64]bool
+	awaitingHourMu sync.Mutex
+
+	digestHours []int
 }
 
-func New(b *telebot.Bot, s Storage, p PandaClient, defaultTeams []domain.TeamInfo) *Bot {
-	menu := &telebot.ReplyMarkup{ResizeKeyboard: true}
+func New(b *telebot.Bot, s Storage, p PandaClient, defaultTeams []domain.TeamInfo, digestPresetHours []int) *Bot {
+	menu := &telebot.ReplyMarkup{ResizeKeyboard: true, IsPersistent: true}
 	botApp := &Bot{
 		telebot:      b,
 		storage:      s,
 		panda:        p,
 		defaultTeams: defaultTeams,
+		digestHours:  config.NormalizeDigestHours(digestPresetHours),
+		awaitingHour: make(map[int64]bool),
 		broadcastCh:  make(chan BroadcastTask, 10000),
 		mainMenu:     menu,
 		btnSchedule:  menu.Text("📅 Узнать расписание"),
 		btnSubscribe: menu.Text("🔔 Подписки на команды"),
 		btnSearch:    menu.Text("🔍 Поиск команды"),
+		btnDigest:    menu.Text("⏰ Дайджест"),
 	}
 
 	botApp.mainMenu.Reply(
 		botApp.mainMenu.Row(botApp.btnSchedule),
 		botApp.mainMenu.Row(botApp.btnSubscribe),
 		botApp.mainMenu.Row(botApp.btnSearch),
+		botApp.mainMenu.Row(botApp.btnDigest),
 	)
 
 	return botApp
@@ -79,8 +97,10 @@ func (b *Bot) RegisterHandlers() {
 	b.telebot.Handle(&b.btnSchedule, b.handleSchedule)
 	b.telebot.Handle(&b.btnSubscribe, b.handleSubscribe)
 	b.telebot.Handle(&b.btnSearch, b.handleSearchPrompt)
+	b.telebot.Handle(&b.btnDigest, b.handleDigestMenu)
 	b.telebot.Handle(telebot.OnText, b.handleTextSearch)
 	b.telebot.Handle("\fsub_", b.handleToggleSub)
+	b.telebot.Handle("\fdigest", b.handleDigestCallback)
 }
 
 func (b *Bot) Start() {

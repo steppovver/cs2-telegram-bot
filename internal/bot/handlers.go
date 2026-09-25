@@ -201,10 +201,13 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 }
 
 func (b *Bot) handleSearchPrompt(c telebot.Context) error {
-	return c.Send("Введите часть названия команды (например, Falcon):")
+	return c.Send("Введите часть названия команды (например, Falcon):", b.mainMenu)
 }
 
 func (b *Bot) handleTextSearch(c telebot.Context) error {
+	if b.consumeHourInput(c) {
+		return nil
+	}
 	if c.Message() == nil || c.Sender() == nil {
 		return nil
 	}
@@ -239,7 +242,12 @@ func (b *Bot) handleTextSearch(c telebot.Context) error {
 	}
 
 	menu := b.buildTeamsKeyboard("sub_", teamsToDisplay, subs)
-	return b.sendChunked(c, sb.String(), menu)
+	if err := b.sendChunked(c, sb.String(), menu); err != nil {
+		return err
+	}
+	// Сообщение выше несет инлайн-кнопки, а Telegram разрешает только один
+	// reply_markup на сообщение — главную клавиатуру возвращаем отдельно.
+	return b.restoreMainMenu(c)
 }
 
 func (b *Bot) handleToggleSub(c telebot.Context) error {
@@ -421,4 +429,12 @@ func (b *Bot) sendChunked(c telebot.Context, text string, opts ...interface{}) e
 		}
 	}
 	return err
+}
+
+// restoreMainMenu возвращает главную клавиатуру после текстового ввода.
+// Набор текста сворачивает ее на клиенте, а сообщение с инлайн-кнопками
+// вторую клавиатуру прицепить не может (лимит Telegram: один reply_markup
+// на сообщение) — поэтому меню возвращаем отдельным сообщением.
+func (b *Bot) restoreMainMenu(c telebot.Context) error {
+	return c.Send("Выбери нужное действие в меню ниже:", b.mainMenu)
 }
