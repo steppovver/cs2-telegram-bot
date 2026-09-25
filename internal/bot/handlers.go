@@ -2,6 +2,7 @@ package bot
 
 import (
 	"fmt"
+	"html"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -24,9 +25,16 @@ func (b *Bot) loggingMiddleware(next telebot.HandlerFunc) telebot.HandlerFunc {
 
 		err := next(c)
 
+		var userID int64
+		var username string
+		if s := c.Sender(); s != nil {
+			userID = s.ID
+			username = s.Username
+		}
+
 		slog.Info("Входящий запрос",
-			slog.Int64("user_id", c.Sender().ID),
-			slog.String("username", c.Sender().Username),
+			slog.Int64("user_id", userID),
+			slog.String("username", username),
 			slog.String("action", action),
 			slog.Duration("duration", time.Since(start)),
 		)
@@ -39,6 +47,9 @@ func (b *Bot) handleStart(c telebot.Context) error {
 }
 
 func (b *Bot) handleSubscribe(c telebot.Context) error {
+	if c.Sender() == nil {
+		return nil
+	}
 	userID := c.Sender().ID
 	subs, err := b.storage.GetUserSubscriptions(userID)
 	if err != nil {
@@ -87,6 +98,9 @@ func (b *Bot) handleSubscribe(c telebot.Context) error {
 }
 
 func (b *Bot) handleSchedule(c telebot.Context) error {
+	if c.Sender() == nil {
+		return nil
+	}
 	userID := c.Sender().ID
 	subs, err := b.storage.GetUserSubscriptions(userID)
 	if err != nil {
@@ -119,7 +133,7 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 	if len(liveMatches) > 0 {
 		sb.WriteString("🔴 <b>Сейчас играют:</b>\n\n")
 		for _, match := range liveMatches {
-			teamA, teamB := match.TeamA, match.TeamB
+			teamA, teamB := html.EscapeString(match.TeamA), html.EscapeString(match.TeamB)
 			for _, sub := range subs {
 				if sub.ID == match.TeamAID {
 					teamA = "<b>" + teamA + "</b>"
@@ -150,7 +164,7 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 		sb.WriteString("⚡ <b>Ближайшие матчи:</b>\n\n")
 		for _, match := range upcoming {
 			timeStr := formatTGTime(match.Time, "dt", "02.01 15:04 UTC")
-			teamA, teamB := match.TeamA, match.TeamB
+			teamA, teamB := html.EscapeString(match.TeamA), html.EscapeString(match.TeamB)
 			for _, sub := range subs {
 				if sub.ID == match.TeamAID {
 					teamA = "<b>" + teamA + "</b>"
@@ -169,7 +183,7 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 		sb.WriteString("📅 <b>Предстоящие матчи:</b>\n\n")
 		for _, match := range further {
 			timeStr := formatTGTime(match.Time, "dt", "02.01 15:04 UTC")
-			teamA, teamB := match.TeamA, match.TeamB
+			teamA, teamB := html.EscapeString(match.TeamA), html.EscapeString(match.TeamB)
 			for _, sub := range subs {
 				if sub.ID == match.TeamAID {
 					teamA = "<b>" + teamA + "</b>"
@@ -183,7 +197,7 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 		sb.WriteString("\n")
 	}
 
-	return c.Send(sb.String(), telebot.ModeHTML)
+	return b.sendChunked(c, sb.String())
 }
 
 func (b *Bot) handleSearchPrompt(c telebot.Context) error {
@@ -191,8 +205,11 @@ func (b *Bot) handleSearchPrompt(c telebot.Context) error {
 }
 
 func (b *Bot) handleTextSearch(c telebot.Context) error {
+	if c.Message() == nil || c.Sender() == nil {
+		return nil
+	}
 	query := strings.TrimSpace(c.Message().Text)
-	if len(query) < 2 {
+	if len([]rune(query)) < 2 {
 		return c.Send("Введите хотя бы 2 символа для поиска.")
 	}
 
@@ -204,13 +221,13 @@ func (b *Bot) handleTextSearch(c telebot.Context) error {
 	subs, _ := b.storage.GetUserSubscriptions(c.Sender().ID)
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("🔍 <b>Результаты поиска по \"%s\":</b>\n\n", query))
+	sb.WriteString(fmt.Sprintf("🔍 <b>Результаты поиска по \"%s\":</b>\n\n", html.EscapeString(query)))
 
 	var teamsToDisplay []domain.TeamInfo
 	for _, t := range teams {
-		sb.WriteString(fmt.Sprintf("🛡 <b>%s</b>\n", t.Name))
+		sb.WriteString(fmt.Sprintf("🛡 <b>%s</b>\n", html.EscapeString(t.Name)))
 		if t.Players != "" {
-			sb.WriteString(fmt.Sprintf("👥 Игроки: %s\n\n", t.Players))
+			sb.WriteString(fmt.Sprintf("👥 Игроки: %s\n\n", html.EscapeString(t.Players)))
 		} else {
 			sb.WriteString("👥 Игроки: нет данных\n\n")
 		}
@@ -222,7 +239,7 @@ func (b *Bot) handleTextSearch(c telebot.Context) error {
 	}
 
 	menu := b.buildTeamsKeyboard("sub_", teamsToDisplay, subs)
-	return c.Send(sb.String(), telebot.ModeHTML, menu)
+	return b.sendChunked(c, sb.String(), menu)
 }
 
 func (b *Bot) handleToggleSub(c telebot.Context) error {
@@ -268,6 +285,9 @@ func (b *Bot) handleToggleSub(c telebot.Context) error {
 	// Отправляем успешный toast-ответ
 	_ = c.Respond(&telebot.CallbackResponse{Text: toastMsg})
 
+	if c.Message() == nil {
+		return nil
+	}
 	markup := c.Message().ReplyMarkup
 	if markup != nil {
 		for i, row := range markup.InlineKeyboard {
@@ -368,4 +388,37 @@ func teamDisplayName(subs []domain.TeamInfo, teamID int) string {
 		}
 	}
 	return ""
+}
+
+// tgChunkLimit — запас под лимит Telegram в 4096 символов на сообщение.
+const tgChunkLimit = 3500
+
+// sendChunked отправляет длинный HTML-текст кусками по строкам.
+// Дополнительные opts (например, inline-меню) цепляются к последнему куску.
+func (b *Bot) sendChunked(c telebot.Context, text string, opts ...interface{}) error {
+	htmlMode := []interface{}{telebot.ModeHTML}
+	if len(text) <= tgChunkLimit {
+		return c.Send(text, append(htmlMode, opts...)...)
+	}
+
+	var err error
+	var cur strings.Builder
+	lines := strings.SplitAfter(text, "\n")
+	for i, line := range lines {
+		last := i == len(lines)-1
+		if cur.Len()+len(line) > tgChunkLimit {
+			if e := c.Send(cur.String(), telebot.ModeHTML); e != nil {
+				err = e
+			}
+			cur.Reset()
+		}
+		cur.WriteString(line)
+		if last && cur.Len() > 0 {
+			args := append(htmlMode, opts...)
+			if e := c.Send(cur.String(), args...); e != nil {
+				err = e
+			}
+		}
+	}
+	return err
 }

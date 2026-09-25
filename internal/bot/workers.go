@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
+	"html"
 	"log/slog"
 	"time"
 
@@ -64,15 +65,23 @@ func (b *Bot) runPollerCycle(ctx context.Context) {
 			continue
 		}
 
+		// Матчи без времени начала (begin_at=null в API) не рассылаем:
+		// иначе спамим датой 01.01.0001, а CleanOldMatches все равно их сотрет.
+		if match.Time.IsZero() {
+			continue
+		}
+
 		var msg string
 		timeStr := formatTGTime(match.Time, "dt", "15:04 02.01 UTC")
+		escA, escB := html.EscapeString(match.TeamA), html.EscapeString(match.TeamB)
+		escOldA, escOldB := html.EscapeString(oldTeamA), html.EscapeString(oldTeamB)
 
 		if isNew {
 			msg = fmt.Sprintf("🆕 <b>Добавлен новый матч!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s",
-				match.TeamA, match.TeamB, timeStr)
+				escA, escB, timeStr)
 		} else if match.Status == "running" && statusChanged && oldStatus != "running" {
 			msg = fmt.Sprintf("🔴 <b>Матч начался!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s",
-				match.TeamA, match.TeamB, timeStr)
+				escA, escB, timeStr)
 		} else if teamsChanged {
 			timeText := fmt.Sprintf("⏰ Время: %s", timeStr)
 			if timeChanged {
@@ -80,11 +89,11 @@ func (b *Bot) runPollerCycle(ctx context.Context) {
 				timeText = fmt.Sprintf("<s>Время: %s</s>\n⏰ Новое: %s", oldTimeStr, timeStr)
 			}
 			msg = fmt.Sprintf("🔄 <b>Определился соперник!</b>\n\n<s>%s vs %s</s>\n🛡 <b>%s</b> vs <b>%s</b>\n%s",
-				oldTeamA, oldTeamB, match.TeamA, match.TeamB, timeText)
+				escOldA, escOldB, escA, escB, timeText)
 		} else if timeChanged {
 			oldTimeStr := formatTGTime(oldTime, "dt", "15:04 02.01 UTC")
 			msg = fmt.Sprintf("⚠️ <b>Время матча изменено!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\n<s>Старое время: %s</s>\n⏰ Новое время: %s",
-				match.TeamA, match.TeamB, oldTimeStr, timeStr)
+				escA, escB, oldTimeStr, timeStr)
 		}
 
 		if msg == "" {
@@ -129,7 +138,7 @@ func (b *Bot) runRemindersCycle(ctx context.Context) {
 
 		timeStr := formatTGTime(match.Time, "t", "15:04 UTC")
 		msg := fmt.Sprintf("🔥 <b>Матч начнется с минуты на минуту!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\nНачало в %s",
-			match.TeamA, match.TeamB, timeStr)
+			html.EscapeString(match.TeamA), html.EscapeString(match.TeamB), timeStr)
 
 		if !b.broadcastToFans(ctx, match, msg) {
 			slog.Warn("Напоминание не поставлено в очередь, повтор на следующем цикле",

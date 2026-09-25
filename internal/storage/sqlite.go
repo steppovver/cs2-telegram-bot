@@ -406,26 +406,38 @@ func (s *Storage) CleanOldMatches() {
 }
 
 func (s *Storage) CleanStaleRunningMatches(apiMatchIDs map[int]bool) {
-	args := make([]any, 0, len(apiMatchIDs))
-	placeholders := make([]string, 0, len(apiMatchIDs))
+	// Чанкуем IN-клаузу под лимит переменных SQLite (999/32766),
+	// иначе при сотнях матчей очистка всегда падает с ошибкой.
+	const chunkSize = 500
+	ids := make([]any, 0, len(apiMatchIDs))
 	for id := range apiMatchIDs {
-		args = append(args, id)
-		placeholders = append(placeholders, "?")
-		slog.Debug("CleanStaleRunningMatches", slog.Int("api_match_id", id))
+		ids = append(ids, id)
 	}
+	slog.Debug("CleanStaleRunningMatches", slog.Int("api_matches", len(ids)))
 
-	var query string
-	if len(placeholders) > 0 {
-		query = `UPDATE matches SET status = 'post_match'
-			WHERE status = 'running' AND id NOT IN (` + strings.Join(placeholders, ",") + `)`
-		_, err := s.db.Exec(query, args...)
-		if err != nil {
-			slog.Error("Ошибка при очистке зависших running-матчей", slog.Any("error", err))
-		}
-	} else {
+	if len(ids) == 0 {
 		_, err := s.db.Exec(`UPDATE matches SET status = 'post_match' WHERE status = 'running'`)
 		if err != nil {
 			slog.Error("Ошибка при очистке зависших running-матчей", slog.Any("error", err))
+		}
+		return
+	}
+
+	for start := 0; start < len(ids); start += chunkSize {
+		end := start + chunkSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		chunk := ids[start:end]
+		placeholders := make([]string, len(chunk))
+		for i := range chunk {
+			placeholders[i] = "?"
+		}
+		query := `UPDATE matches SET status = 'post_match'
+			WHERE status = 'running' AND id NOT IN (` + strings.Join(placeholders, ",") + `)`
+		if _, err := s.db.Exec(query, chunk...); err != nil {
+			slog.Error("Ошибка при очистке зависших running-матчей", slog.Any("error", err))
+			return
 		}
 	}
 }
