@@ -315,8 +315,6 @@ func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, te
 	slog.Debug("ProcessMatch update",
 		slog.Int("match_id", m.ID),
 		slog.String("teams", fmt.Sprintf("%s vs %s", m.TeamA, m.TeamB)),
-		slog.String("old_status", dbStatus),
-		slog.String("new_status", m.Status),
 		slog.Bool("time_changed", timeChanged),
 		slog.Bool("teams_changed", teamsChanged),
 		slog.Bool("status_changed", statusChanged),
