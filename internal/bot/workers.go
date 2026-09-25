@@ -121,16 +121,20 @@ func (b *Bot) runRemindersCycle(ctx context.Context) {
 			continue
 		}
 
-		if err := b.storage.MarkMatchAsNotified(match.ID); err != nil {
-			slog.Error("Ошибка отметки матча как уведомленного", slog.Int("match_id", match.ID), slog.Any("error", err))
-			continue
-		}
-
 		timeStr := formatTGTime(match.Time, "t", "15:04 UTC")
 		msg := fmt.Sprintf("🔥 <b>Матч начнется с минуты на минуту!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\nНачало в %s",
 			match.TeamA, match.TeamB, timeStr)
 
-		b.broadcastToFans(ctx, match, msg)
+		if !b.broadcastToFans(ctx, match, msg) {
+			slog.Warn("Напоминание не поставлено в очередь, повтор на следующем цикле",
+				slog.Int("match_id", match.ID))
+			continue
+		}
+
+		if err := b.storage.MarkMatchAsNotified(match.ID); err != nil {
+			slog.Error("Ошибка отметки матча как уведомленного", slog.Int("match_id", match.ID), slog.Any("error", err))
+			continue
+		}
 	}
 }
 
@@ -154,18 +158,18 @@ func (b *Bot) StartBroadcaster(ctx context.Context) {
 	}
 }
 
-func (b *Bot) broadcastToFans(ctx context.Context, match domain.Match, msg string) {
+func (b *Bot) broadcastToFans(ctx context.Context, match domain.Match, msg string) bool {
 	users, err := b.storage.GetUsersByTeamIDs(match.TeamAID, match.TeamBID)
 	if err != nil {
 		slog.Error("Ошибка получения подписчиков матча",
 			slog.String("team_a", match.TeamA),
 			slog.String("team_b", match.TeamB),
 			slog.Any("error", err))
-		return
+		return false
 	}
 
 	if len(users) == 0 {
-		return
+		return true
 	}
 
 	slog.Info("Добавление в очередь рассылки",
@@ -175,10 +179,11 @@ func (b *Bot) broadcastToFans(ctx context.Context, match domain.Match, msg strin
 	for _, userID := range users {
 		select {
 		case <-ctx.Done():
-			return
+			return false
 		case b.broadcastCh <- BroadcastTask{UserID: userID, Text: msg}:
 		}
 	}
+	return true
 }
 
 func formatTGTime(t time.Time, tgFormat, fallbackFormat string) string {
