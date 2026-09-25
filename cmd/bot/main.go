@@ -99,9 +99,12 @@ func main() {
 	}()
 
 	// Telegram-бот запускается в отдельной горутине, т.к. Start() блокирует поток
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		slog.Info("Telegram-бот успешно запущен")
 		botApp.Start()
+		slog.Info("Telegram-бот остановлен")
 	}()
 
 	// Ждем сигнала прерывания (Ctrl+C или SIGTERM от Docker/Systemd)

@@ -42,13 +42,39 @@ func (c *Client) FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string) ([
 		return nil, nil
 	}
 
+	// Чанкуем ID команд, чтобы не упереться в лимиты длины URL / API.
+	// Один матч может попасть в несколько чанков (общий соперник) —
+	// дедуплицируем по ID матча.
+	const teamIDsPerRequest = 50
+	merged := make(map[int]domain.Match)
+	for start := 0; start < len(teamIDs); start += teamIDsPerRequest {
+		end := start + teamIDsPerRequest
+		if end > len(teamIDs) {
+			end = len(teamIDs)
+		}
+		chunk, err := c.fetchMatchesChunk(ctx, teamIDs[start:end])
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range chunk {
+			merged[m.ID] = m
+		}
+	}
+
+	allMatches := make([]domain.Match, 0, len(merged))
+	for _, m := range merged {
+		allMatches = append(allMatches, m)
+	}
+	return allMatches, nil
+}
+
+func (c *Client) fetchMatchesChunk(ctx context.Context, teamIDs []string) ([]domain.Match, error) {
 	joinedIDs := strings.Join(teamIDs, ",")
 	var allMatches []domain.Match
 	page := 1
 
 	for {
-		// Добавляем параметр page=%d в URL
-		url := fmt.Sprintf("https://api.pandascore.co/csgo/matches/upcoming?filter[opponent_id]=%s&filter[status]=not_started,postponed,running&sort=begin_at&per_page=100&page=%d", joinedIDs, page)
+		url := fmt.Sprintf("https://api.pandascore.co/csgo/matches?filter[opponent_id]=%s&filter[status]=not_started,running&sort=begin_at&per_page=100&page=%d", joinedIDs, page)
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
@@ -111,6 +137,11 @@ func (c *Client) FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string) ([
 			if pm.Status == "canceled" {
 				continue
 			}
+			// begin_at=null в API -> zero time: такой матч нельзя показать
+			// и напомнить о нем, пропускаем до появления времени.
+			if pm.BeginAt.IsZero() {
+				continue
+			}
 
 			teamA, teamB := "TBD", "TBD"
 			teamAID, teamBID := 0, 0
@@ -135,6 +166,7 @@ func (c *Client) FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string) ([
 				TeamAID: teamAID,
 				TeamBID: teamBID,
 				Time:    pm.BeginAt,
+				Status:  pm.Status,
 			})
 		}
 

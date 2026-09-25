@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS matches (
 	team_a_id INTEGER,
 	team_b_id INTEGER,
 	begin_at INTEGER,
-	notified INTEGER DEFAULT 0
+	notified INTEGER DEFAULT 0,
+	status TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_teams_name ON teams(name);
 CREATE INDEX IF NOT EXISTS idx_players_team_id ON players(team_id);
@@ -84,6 +85,7 @@ func InitSchema(db *sql.DB) error {
 		`ALTER TABLE matches ADD COLUMN notified INTEGER DEFAULT 0;`,
 		`ALTER TABLE matches ADD COLUMN team_a_id INTEGER;`,
 		`ALTER TABLE matches ADD COLUMN team_b_id INTEGER;`,
+		`ALTER TABLE matches ADD COLUMN status TEXT;`,
 	}
 	for _, q := range alters {
 		_, err := db.Exec(q)
@@ -271,51 +273,70 @@ func (s *Storage) backfillMatchTeamIDs() error {
 	return err
 }
 
-func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, teamsChanged bool, oldTime time.Time, oldTeamA string, oldTeamB string, err error) {
+func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, teamsChanged bool, statusChanged bool, oldTime time.Time, oldTeamA string, oldTeamB string, oldStatus string, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return false, false, false, time.Time{}, "", "", err
+		return false, false, false, false, time.Time{}, "", "", "", err
 	}
 	defer tx.Rollback()
 
 	var dbTimeUnix int64
-	var dbTeamA, dbTeamB string
+	var dbTeamA, dbTeamB, dbStatus string
 
-	err = tx.QueryRow(`SELECT begin_at, team_a, team_b FROM matches WHERE id = ?`, m.ID).
-		Scan(&dbTimeUnix, &dbTeamA, &dbTeamB)
+	err = tx.QueryRow(`SELECT begin_at, team_a, team_b, COALESCE(status, '') FROM matches WHERE id = ?`, m.ID).
+		Scan(&dbTimeUnix, &dbTeamA, &dbTeamB, &dbStatus)
 
 	if err == sql.ErrNoRows {
+		slog.Debug("ProcessMatch new",
+			slog.Int("match_id", m.ID),
+			slog.String("teams", fmt.Sprintf("%s vs %s", m.TeamA, m.TeamB)),
+			slog.String("status", m.Status),
+			slog.Int64("begin_at", m.Time.Unix()),
+		)
 		_, err = tx.Exec(
-			`INSERT INTO matches (id, team_a, team_b, team_a_id, team_b_id, begin_at) VALUES (?, ?, ?, ?, ?, ?)`,
-			m.ID, m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Time.Unix(),
+			`INSERT INTO matches (id, team_a, team_b, team_a_id, team_b_id, begin_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			m.ID, m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Time.Unix(), m.Status,
 		)
 		if err != nil {
-			return false, false, false, time.Time{}, "", "", err
+			return false, false, false, false, time.Time{}, "", "", "", err
 		}
-		tx.Commit()
-		return true, false, false, time.Time{}, "", "", nil
+		if err := tx.Commit(); err != nil {
+			return false, false, false, false, time.Time{}, "", "", "", err
+		}
+		return true, false, false, false, time.Time{}, "", "", "", nil
 	} else if err != nil {
-		return false, false, false, time.Time{}, "", "", err
+		return false, false, false, false, time.Time{}, "", "", "", err
 	}
 
 	timeChanged = dbTimeUnix != m.Time.Unix()
 	teamsChanged = (dbTeamA != m.TeamA) || (dbTeamB != m.TeamB)
+	statusChanged = dbStatus != m.Status
+
+	slog.Debug("ProcessMatch update",
+		slog.Int("match_id", m.ID),
+		slog.String("teams", fmt.Sprintf("%s vs %s", m.TeamA, m.TeamB)),
+		slog.Bool("time_changed", timeChanged),
+		slog.Bool("teams_changed", teamsChanged),
+		slog.Bool("status_changed", statusChanged),
+	)
 
 	_, err = tx.Exec(
-		`UPDATE matches SET begin_at = ?, team_a = ?, team_b = ?, team_a_id = ?, team_b_id = ? WHERE id = ?`,
-		m.Time.Unix(), m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.ID,
+		`UPDATE matches SET begin_at = ?, team_a = ?, team_b = ?, team_a_id = ?, team_b_id = ?, status = ? WHERE id = ?`,
+		m.Time.Unix(), m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Status, m.ID,
 	)
 	if err != nil {
-		return false, false, false, time.Time{}, "", "", err
+		return false, false, false, false, time.Time{}, "", "", "", err
 	}
 
-	tx.Commit()
-	return false, timeChanged, teamsChanged, time.Unix(dbTimeUnix, 0), dbTeamA, dbTeamB, nil
+	if err := tx.Commit(); err != nil {
+		return false, false, false, false, time.Time{}, "", "", "", err
+	}
+	return false, timeChanged, teamsChanged, statusChanged, time.Unix(dbTimeUnix, 0), dbTeamA, dbTeamB, dbStatus, nil
 }
 
 func (s *Storage) GetUpcomingUserMatches(userID int64) ([]domain.Match, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id
+		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, '')
 		FROM matches m
 		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
 		WHERE s.user_id = ? AND m.begin_at > ?
@@ -331,12 +352,45 @@ func (s *Storage) GetUpcomingUserMatches(userID int64) ([]domain.Match, error) {
 		var m domain.Match
 		var unixTime int64
 		var teamAID, teamBID sql.NullInt64
-		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID); err != nil {
+		var status string
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status); err != nil {
 			continue
 		}
 		m.Time = time.Unix(unixTime, 0)
 		m.TeamAID = int(teamAID.Int64)
 		m.TeamBID = int(teamBID.Int64)
+		m.Status = status
+		matches = append(matches, m)
+	}
+	return matches, rows.Err()
+}
+
+func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
+	rows, err := s.db.Query(`
+		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, '')
+		FROM matches m
+		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
+		WHERE s.user_id = ? AND m.begin_at <= ? AND m.status = 'running'
+		ORDER BY m.begin_at ASC
+	`, userID, time.Now().Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var matches []domain.Match
+	for rows.Next() {
+		var m domain.Match
+		var unixTime int64
+		var teamAID, teamBID sql.NullInt64
+		var status string
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status); err != nil {
+			continue
+		}
+		m.Time = time.Unix(unixTime, 0)
+		m.TeamAID = int(teamAID.Int64)
+		m.TeamBID = int(teamBID.Int64)
+		m.Status = status
 		matches = append(matches, m)
 	}
 	return matches, rows.Err()
@@ -346,6 +400,43 @@ func (s *Storage) CleanOldMatches() {
 	_, err := s.db.Exec(`DELETE FROM matches WHERE begin_at < ?`, time.Now().Add(-24*time.Hour).Unix())
 	if err != nil {
 		slog.Error("Ошибка при очистке старых матчей", slog.Any("error", err))
+	}
+}
+
+func (s *Storage) CleanStaleRunningMatches(apiMatchIDs map[int]bool) {
+	// Чанкуем IN-клаузу под лимит переменных SQLite (999/32766),
+	// иначе при сотнях матчей очистка всегда падает с ошибкой.
+	const chunkSize = 500
+	ids := make([]any, 0, len(apiMatchIDs))
+	for id := range apiMatchIDs {
+		ids = append(ids, id)
+	}
+	slog.Debug("CleanStaleRunningMatches", slog.Int("api_matches", len(ids)))
+
+	if len(ids) == 0 {
+		_, err := s.db.Exec(`UPDATE matches SET status = 'post_match' WHERE status = 'running'`)
+		if err != nil {
+			slog.Error("Ошибка при очистке зависших running-матчей", slog.Any("error", err))
+		}
+		return
+	}
+
+	for start := 0; start < len(ids); start += chunkSize {
+		end := start + chunkSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		chunk := ids[start:end]
+		placeholders := make([]string, len(chunk))
+		for i := range chunk {
+			placeholders[i] = "?"
+		}
+		query := `UPDATE matches SET status = 'post_match'
+			WHERE status = 'running' AND id NOT IN (` + strings.Join(placeholders, ",") + `)`
+		if _, err := s.db.Exec(query, chunk...); err != nil {
+			slog.Error("Ошибка при очистке зависших running-матчей", slog.Any("error", err))
+			return
+		}
 	}
 }
 

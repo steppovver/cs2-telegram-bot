@@ -9,6 +9,7 @@ type Match struct {
 	TeamAID int
 	TeamBID int
 	Time    time.Time
+	Status  string
 }
 
 type TeamInfo struct {
