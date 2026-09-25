@@ -300,7 +300,9 @@ func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, te
 		if err != nil {
 			return false, false, false, false, time.Time{}, "", "", "", err
 		}
-		tx.Commit()
+		if err := tx.Commit(); err != nil {
+			return false, false, false, false, time.Time{}, "", "", "", err
+		}
 		return true, false, false, false, time.Time{}, "", "", "", nil
 	} else if err != nil {
 		return false, false, false, false, time.Time{}, "", "", "", err
@@ -328,7 +330,9 @@ func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, te
 		return false, false, false, false, time.Time{}, "", "", "", err
 	}
 
-	tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return false, false, false, false, time.Time{}, "", "", "", err
+	}
 	return false, timeChanged, teamsChanged, statusChanged, time.Unix(dbTimeUnix, 0), dbTeamA, dbTeamB, dbStatus, nil
 }
 

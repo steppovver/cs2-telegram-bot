@@ -226,17 +226,13 @@ func (b *Bot) handleTextSearch(c telebot.Context) error {
 }
 
 func (b *Bot) handleToggleSub(c telebot.Context) error {
-	payload := c.Callback().Data
-	parts := strings.Split(payload, "|")
-	if len(parts) != 3 {
-		return c.Respond(&telebot.CallbackResponse{Text: "Ошибка формата данных."})
+	if c.Callback() == nil || c.Sender() == nil {
+		return nil
 	}
-
-	teamID, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil {
+	teamID, ok := parseTeamIDFromCallback(c.Callback().Data)
+	if !ok {
 		return c.Respond(&telebot.CallbackResponse{Text: "Ошибка идентификатора команды."})
 	}
-	teamName := parts[2]
 	userID := c.Sender().ID
 
 	subs, err := b.storage.GetUserSubscriptions(userID)
@@ -246,6 +242,14 @@ func (b *Bot) handleToggleSub(c telebot.Context) error {
 	}
 
 	isSubbed := isTeamSubscribed(subs, int(teamID))
+
+	teamName := teamDisplayName(subs, int(teamID))
+	if teams, err := b.storage.GetTeamsByIDs([]int{int(teamID)}); err == nil && len(teams) > 0 && teams[0].Name != "" {
+		teamName = teams[0].Name
+	}
+	if teamName == "" {
+		teamName = fmt.Sprintf("команда %d", teamID)
+	}
 
 	var toastMsg string
 	if isSubbed {
@@ -268,12 +272,14 @@ func (b *Bot) handleToggleSub(c telebot.Context) error {
 	if markup != nil {
 		for i, row := range markup.InlineKeyboard {
 			for j, btn := range row {
-				if strings.Contains(btn.Data, payload) {
-					if isSubbed {
-						markup.InlineKeyboard[i][j].Text = strings.TrimPrefix(btn.Text, "✅ ")
-					} else {
-						markup.InlineKeyboard[i][j].Text = "✅ " + btn.Text
-					}
+				btnTeamID, ok := parseTeamIDFromButton(btn.Data)
+				if !ok || btnTeamID != teamID {
+					continue
+				}
+				if isSubbed {
+					markup.InlineKeyboard[i][j].Text = strings.TrimPrefix(btn.Text, "✅ ")
+				} else {
+					markup.InlineKeyboard[i][j].Text = "✅ " + btn.Text
 				}
 			}
 		}
@@ -288,7 +294,7 @@ func (b *Bot) buildTeamsKeyboard(actionPrefix string, teamsToDisplay []domain.Te
 	var currentRow []telebot.Btn
 
 	for _, t := range teamsToDisplay {
-		payload := actionPrefix + "|" + strconv.Itoa(t.ID) + "|" + t.Name
+		payload := strconv.Itoa(t.ID)
 		btnText := t.Name
 		if isTeamSubscribed(userSubs, t.ID) {
 			btnText = "✅ " + t.Name
@@ -315,4 +321,51 @@ func isTeamSubscribed(subs []domain.TeamInfo, teamID int) bool {
 		}
 	}
 	return false
+}
+
+// parseTeamIDFromCallback разбирает payload колбэка после маршрутизации telebot.
+// Новый формат: "3210". Легаси: "sub_|3210|Name" / "sub_|3210".
+func parseTeamIDFromCallback(data string) (int64, bool) {
+	data = strings.TrimSpace(data)
+	if data == "" {
+		return 0, false
+	}
+	if !strings.Contains(data, "|") {
+		id, err := strconv.ParseInt(data, 10, 64)
+		if err != nil || id <= 0 {
+			return 0, false
+		}
+		return id, true
+	}
+	parts := strings.SplitN(data, "|", 3)
+	if len(parts) >= 2 && parts[0] == "sub_" {
+		id, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+		if err != nil || id <= 0 {
+			return 0, false
+		}
+		return id, true
+	}
+	for _, p := range parts {
+		if id, err := strconv.ParseInt(strings.TrimSpace(p), 10, 64); err == nil && id > 0 {
+			return id, true
+		}
+	}
+	return 0, false
+}
+
+// parseTeamIDFromButton извлекает team_id из сырого callback_data кнопки
+// (проводной формат "\fsub_|<inner>"). Совместим со старыми сообщениями.
+func parseTeamIDFromButton(btnData string) (int64, bool) {
+	s := strings.TrimPrefix(btnData, "\f")
+	s = strings.TrimPrefix(s, "sub_|")
+	return parseTeamIDFromCallback(s)
+}
+
+func teamDisplayName(subs []domain.TeamInfo, teamID int) string {
+	for _, s := range subs {
+		if s.ID == teamID {
+			return s.Name
+		}
+	}
+	return ""
 }

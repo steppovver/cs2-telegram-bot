@@ -150,16 +150,47 @@ func (b *Bot) StartBroadcaster(ctx context.Context) {
 	limiter := time.NewTicker(40 * time.Millisecond)
 	defer limiter.Stop()
 
+	send := func(task BroadcastTask) {
+		if _, err := b.telebot.Send(telebot.ChatID(task.UserID), task.Text, telebot.ModeHTML); err != nil {
+			slog.Warn("Ошибка отправки", slog.Int64("user_id", task.UserID), slog.Any("error", err))
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("Воркер рассылок завершил работу")
+			// Graceful drain: отправляем остатки с тем же лимитом,
+			// но не дольше таймаута, чтобы не висеть на SIGTERM вечно.
+			// 10000 задач * 40мс = ~400с, поэтому полная доставка
+			// негарантирована — остаток логируем как дропнутый.
+			slog.Info("Воркер рассылок: дренируем очередь",
+				slog.Int("queue_len", len(b.broadcastCh)))
+			drainTimeout := time.NewTimer(10 * time.Second)
+			defer drainTimeout.Stop()
+			drained, dropped := 0, 0
+		drainLoop:
+			for {
+				select {
+				case task := <-b.broadcastCh:
+					select {
+					case <-limiter.C:
+						send(task)
+						drained++
+					case <-drainTimeout.C:
+						dropped = len(b.broadcastCh) + 1
+						break drainLoop
+					}
+				default:
+					break drainLoop
+				}
+			}
+			slog.Info("Воркер рассылок завершил работу",
+				slog.Int("drained", drained),
+				slog.Int("dropped", dropped))
 			return
 		case task := <-b.broadcastCh:
 			<-limiter.C // Ждем разрешения от тикера перед отправкой
-			if _, err := b.telebot.Send(telebot.ChatID(task.UserID), task.Text, telebot.ModeHTML); err != nil {
-				slog.Warn("Ошибка отправки", slog.Int64("user_id", task.UserID), slog.Any("error", err))
-			}
+			send(task)
 		}
 	}
 }
