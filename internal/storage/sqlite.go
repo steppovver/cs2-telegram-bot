@@ -46,6 +46,14 @@ CREATE TABLE IF NOT EXISTS matches (
 CREATE INDEX IF NOT EXISTS idx_teams_name ON teams(name);
 CREATE INDEX IF NOT EXISTS idx_players_team_id ON players(team_id);
 CREATE INDEX IF NOT EXISTS idx_matches_begin_at ON matches(begin_at);
+CREATE TABLE IF NOT EXISTS user_digest (
+	user_id INTEGER PRIMARY KEY,
+	enabled INTEGER NOT NULL DEFAULT 0,
+	hour INTEGER NOT NULL DEFAULT 10,
+	last_sent_date TEXT NOT NULL DEFAULT '',
+	FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_user_digest_due ON user_digest(enabled, hour, last_sent_date);
 `
 
 type Storage struct {
@@ -627,6 +635,125 @@ func (s *Storage) GetTeamsByIDs(ids []int) ([]domain.TeamInfo, error) {
 		})
 	}
 	return teams, rows.Err()
+}
+
+const (
+	defaultDigestHour = 10
+	minDigestHour     = 0
+	maxDigestHour     = 23
+)
+
+func (s *Storage) GetDigestSettings(userID int64) (domain.DigestSettings, error) {
+	var enabled int
+	var hour int
+	err := s.db.QueryRow(`SELECT enabled, hour FROM user_digest WHERE user_id = ?`, userID).Scan(&enabled, &hour)
+	if err == sql.ErrNoRows {
+		return domain.DigestSettings{Enabled: false, Hour: defaultDigestHour}, nil
+	}
+	if err != nil {
+		return domain.DigestSettings{}, err
+	}
+	return domain.DigestSettings{Enabled: enabled != 0, Hour: hour}, nil
+}
+
+func (s *Storage) SetDigestEnabled(userID int64, enabled bool) error {
+	enabledInt := 0
+	if enabled {
+		enabledInt = 1
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO users (id) VALUES (?)`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO user_digest (user_id, enabled, hour)
+		VALUES (?, ?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET enabled = excluded.enabled`,
+		userID, enabledInt, defaultDigestHour); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Storage) SetDigestHour(userID int64, hour int) error {
+	if hour < minDigestHour || hour > maxDigestHour {
+		return fmt.Errorf("час должен быть от %d до %d", minDigestHour, maxDigestHour)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO users (id) VALUES (?)`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO user_digest (user_id, enabled, hour)
+		VALUES (?, ?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET hour = excluded.hour`,
+		userID, 0, hour); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Storage) GetDigestDueUsers(hour int, today string) ([]int64, error) {
+	rows, err := s.db.Query(`SELECT user_id FROM user_digest
+		WHERE enabled = 1 AND hour = ? AND last_sent_date != ?`, hour, today)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		users = append(users, id)
+	}
+	return users, rows.Err()
+}
+
+func (s *Storage) MarkDigestSent(userID int64, date string) error {
+	_, err := s.db.Exec(`UPDATE user_digest SET last_sent_date = ? WHERE user_id = ?`, date, userID)
+	return err
+}
+
+func (s *Storage) GetDigestMatches(userID int64, fromUnix, toUnix int64) ([]domain.Match, error) {
+	rows, err := s.db.Query(`
+		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, '')
+		FROM matches m
+		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
+		WHERE s.user_id = ? AND m.begin_at > ? AND m.begin_at <= ?
+		ORDER BY m.begin_at ASC
+	`, userID, fromUnix, toUnix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var matches []domain.Match
+	for rows.Next() {
+		var m domain.Match
+		var unixTime int64
+		var teamAID, teamBID sql.NullInt64
+		var status string
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status); err != nil {
+			continue
+		}
+		m.Time = time.Unix(unixTime, 0)
+		m.TeamAID = int(teamAID.Int64)
+		m.TeamBID = int(teamBID.Int64)
+		m.Status = status
+		matches = append(matches, m)
+	}
+	return matches, rows.Err()
 }
 
 func (s *Storage) Close() error {

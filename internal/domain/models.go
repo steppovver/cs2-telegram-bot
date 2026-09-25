@@ -22,3 +22,8 @@ type SearchedTeam struct {
 	Name    string
 	Players string
 }
+
+type DigestSettings struct {
+	Enabled bool
+	Hour    int
+}
