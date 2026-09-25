@@ -87,7 +87,13 @@ func (b *Bot) runPollerCycle(ctx context.Context) {
 				match.TeamA, match.TeamB, oldTimeStr, timeStr)
 		}
 
-		b.broadcastToFans(ctx, match, msg)
+		if msg == "" {
+			continue
+		}
+		if !b.broadcastToFans(ctx, match, msg) {
+			slog.Warn("Уведомление не поставлено в очередь (переполнение или отмена)",
+				slog.Int("match_id", match.ID))
+		}
 	}
 
 	b.storage.CleanStaleRunningMatches(apiMatchIDs)
@@ -176,12 +182,30 @@ func (b *Bot) broadcastToFans(ctx context.Context, match domain.Match, msg strin
 		slog.String("match", fmt.Sprintf("%s vs %s", match.TeamA, match.TeamB)),
 		slog.Int("recipients", len(users)))
 
+	dropped := 0
 	for _, userID := range users {
+		// Быстрая проверка отмены без блокировки поллера.
 		select {
 		case <-ctx.Done():
 			return false
-		case b.broadcastCh <- BroadcastTask{UserID: userID, Text: msg}:
+		default:
 		}
+
+		select {
+		case b.broadcastCh <- BroadcastTask{UserID: userID, Text: msg}:
+		default:
+			dropped++
+		}
+	}
+
+	if dropped > 0 {
+		slog.Warn("Очередь рассылки переполнена, часть уведомлений отброшена",
+			slog.String("match", fmt.Sprintf("%s vs %s", match.TeamA, match.TeamB)),
+			slog.Int("dropped", dropped),
+			slog.Int("recipients", len(users)),
+			slog.Int("queue_len", len(b.broadcastCh)),
+		)
+		return false
 	}
 	return true
 }
