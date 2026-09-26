@@ -1,0 +1,20 @@
+[Unit]
+Description=CS2 Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cs2bot
+Group=cs2bot
+WorkingDirectory=/opt/cs2bot
+ExecStart=/opt/cs2bot/cs2bot -config /opt/cs2bot/config.json
+Restart=always
+RestartSec=5
+# Токены лежат в /opt/cs2bot/config.json (0600, владелец cs2bot),
+# в unit-файл секреты не кладем.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
