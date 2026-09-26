@@ -17,7 +17,6 @@ cs2bot
 teams_puller
 cs2bot.exe
 *.exe
-deploy.sh
 
 # Зависимости среды разработки
 .vscode/
