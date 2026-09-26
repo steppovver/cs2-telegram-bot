@@ -536,6 +536,22 @@ func (s *Storage) RemoveUser(userID int64) error {
 	return err
 }
 
+// GetStats возвращает счетчики для админ-панели тремя COUNT-запросами.
+// Таблицы маленькие, отдельный запрос на каждую дешевле JOIN-агрегации.
+func (s *Storage) GetStats() (domain.BotStats, error) {
+	var st domain.BotStats
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&st.Users); err != nil {
+		return st, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM subscriptions`).Scan(&st.Subscriptions); err != nil {
+		return st, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM matches`).Scan(&st.Matches); err != nil {
+		return st, err
+	}
+	return st, nil
+}
+
 func (s *Storage) GetUsersByTeamIDs(teamAID, teamBID int) ([]int64, error) {
 	rows, err := s.db.Query(`
 		SELECT DISTINCT user_id

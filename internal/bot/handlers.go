@@ -46,16 +46,6 @@ func (b *Bot) handleStart(c telebot.Context) error {
 	return c.Send("Привет! Выбери нужное действие в меню ниже:", b.mainMenu)
 }
 
-// handleVersion показывает версию сборки только админам.
-// Чужим (и пустым sender) молча ничего не отвечает, чтобы не палить
-// сам факт существования команды.
-func (b *Bot) handleVersion(c telebot.Context) error {
-	if c.Sender() == nil || !b.admins[c.Sender().ID] {
-		return nil
-	}
-	return c.Send(fmt.Sprintf("cs2bot %s\nсборка: %s", Version, BuildDate))
-}
-
 func (b *Bot) handleSubscribe(c telebot.Context) error {
 	if c.Sender() == nil {
 		return nil

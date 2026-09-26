@@ -25,6 +25,7 @@ type Storage interface {
 	Subscribe(userID, teamID int64, teamName string) error
 	Unsubscribe(userID, teamID int64) error
 	RemoveUser(userID int64) error
+	GetStats() (domain.BotStats, error)
 	SearchTeams(query string) ([]domain.SearchedTeam, error)
 	GetTeamsByIDs(ids []int) ([]domain.TeamInfo, error)
 	GetDigestSettings(userID int64) (domain.DigestSettings, error)
@@ -117,6 +118,7 @@ func (b *Bot) RegisterHandlers() {
 
 	b.telebot.Handle("/start", b.handleStart)
 	b.telebot.Handle("/version", b.handleVersion)
+	b.telebot.Handle("/admin", b.handleAdmin)
 	b.telebot.Handle(&b.btnSchedule, b.handleSchedule)
 	b.telebot.Handle(&b.btnSubscribe, b.handleSubscribe)
 	b.telebot.Handle(&b.btnSearch, b.handleSearchPrompt)
@@ -124,6 +126,13 @@ func (b *Bot) RegisterHandlers() {
 	b.telebot.Handle(telebot.OnText, b.handleTextSearch)
 	b.telebot.Handle("\fsub_", b.handleToggleSub)
 	b.telebot.Handle("\fdigest", b.handleDigestCallback)
+	b.telebot.Handle("\fadmin", b.handleAdminCallback)
+}
+
+// isAdmin проверяет ID по списку admin_ids из конфига.
+// Задел под будущие админ-команды — проверка в одном месте.
+func (b *Bot) isAdmin(userID int64) bool {
+	return b.admins[userID]
 }
 
 func (b *Bot) Start() {

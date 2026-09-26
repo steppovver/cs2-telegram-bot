@@ -29,6 +29,12 @@ type DigestSettings struct {
 	UtcOffset int
 }
 
+type BotStats struct {
+	Users         int
+	Subscriptions int
+	Matches       int
+}
+
 type DigestDueUser struct {
 	UserID    int64
 	HourUTC   int
