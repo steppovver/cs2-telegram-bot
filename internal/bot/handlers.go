@@ -32,7 +32,7 @@ func (b *Bot) loggingMiddleware(next telebot.HandlerFunc) telebot.HandlerFunc {
 			username = s.Username
 		}
 
-		slog.Info("Входящий запрос",
+		slog.Debug("Входящий запрос",
 			slog.Int64("user_id", userID),
 			slog.String("username", username),
 			slog.String("action", action),
@@ -102,6 +102,7 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 		return nil
 	}
 	userID := c.Sender().ID
+	utcOffset, _ := b.storage.GetUserOffset(userID)
 	subs, err := b.storage.GetUserSubscriptions(userID)
 	if err != nil {
 		return c.Send("Произошла ошибка при обращении к базе данных.")
@@ -163,7 +164,7 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 	if len(upcoming) > 0 {
 		sb.WriteString("⚡ <b>Ближайшие матчи:</b>\n\n")
 		for _, match := range upcoming {
-			timeStr := formatTGTime(match.Time, "dt", "02.01 15:04 UTC")
+			timeStr := formatTGTime(match.Time, "dt", "02.01 15:04", utcOffset)
 			teamA, teamB := html.EscapeString(match.TeamA), html.EscapeString(match.TeamB)
 			for _, sub := range subs {
 				if sub.ID == match.TeamAID {
@@ -182,7 +183,7 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 	if len(further) > 0 {
 		sb.WriteString("📅 <b>Предстоящие матчи:</b>\n\n")
 		for _, match := range further {
-			timeStr := formatTGTime(match.Time, "dt", "02.01 15:04 UTC")
+			timeStr := formatTGTime(match.Time, "dt", "02.01 15:04", utcOffset)
 			teamA, teamB := html.EscapeString(match.TeamA), html.EscapeString(match.TeamB)
 			for _, sub := range subs {
 				if sub.ID == match.TeamAID {
@@ -205,6 +206,9 @@ func (b *Bot) handleSearchPrompt(c telebot.Context) error {
 }
 
 func (b *Bot) handleTextSearch(c telebot.Context) error {
+	if b.consumeTZInput(c) {
+		return nil
+	}
 	if b.consumeHourInput(c) {
 		return nil
 	}
@@ -398,34 +402,26 @@ func teamDisplayName(subs []domain.TeamInfo, teamID int) string {
 	return ""
 }
 
-// tgChunkLimit — запас под лимит Telegram в 4096 символов на сообщение.
-const tgChunkLimit = 3500
-
 // sendChunked отправляет длинный HTML-текст кусками по строкам.
 // Дополнительные opts (например, inline-меню) цепляются к последнему куску.
 func (b *Bot) sendChunked(c telebot.Context, text string, opts ...interface{}) error {
 	htmlMode := []interface{}{telebot.ModeHTML}
-	if len(text) <= tgChunkLimit {
-		return c.Send(text, append(htmlMode, opts...)...)
+	chunks := chunkLines(text, tgChunkLimit)
+	if len(chunks) == 1 {
+		return c.Send(chunks[0], append(htmlMode, opts...)...)
 	}
 
 	var err error
-	var cur strings.Builder
-	lines := strings.SplitAfter(text, "\n")
-	for i, line := range lines {
-		last := i == len(lines)-1
-		if cur.Len()+len(line) > tgChunkLimit {
-			if e := c.Send(cur.String(), telebot.ModeHTML); e != nil {
-				err = e
-			}
-			cur.Reset()
-		}
-		cur.WriteString(line)
-		if last && cur.Len() > 0 {
+	for i, chunk := range chunks {
+		if i == len(chunks)-1 {
 			args := append(htmlMode, opts...)
-			if e := c.Send(cur.String(), args...); e != nil {
+			if e := c.Send(chunk, args...); e != nil {
 				err = e
 			}
+			continue
+		}
+		if e := c.Send(chunk, telebot.ModeHTML); e != nil {
+			err = e
 		}
 	}
 	return err

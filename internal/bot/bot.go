@@ -29,7 +29,10 @@ type Storage interface {
 	GetDigestSettings(userID int64) (domain.DigestSettings, error)
 	SetDigestEnabled(userID int64, enabled bool) error
 	SetDigestHour(userID int64, hour int) error
-	GetDigestDueUsers(hour int, today string) ([]int64, error)
+	GetUserOffset(userID int64) (int, error)
+	SetUserOffset(userID int64, offset int) error
+	GetUserOffsets(userIDs []int64) (map[int64]int, error)
+	GetDigestDueUsers(hourUTC int, slot string) ([]domain.DigestDueUser, error)
 	MarkDigestSent(userID int64, date string) error
 	GetDigestMatches(userID int64, fromUnix, toUnix int64) ([]domain.Match, error)
 }
@@ -60,6 +63,9 @@ type Bot struct {
 	awaitingHour   map[int64]bool
 	awaitingHourMu sync.Mutex
 
+	awaitingTZ   map[int64]bool
+	awaitingTZMu sync.Mutex
+
 	digestHours []int
 }
 
@@ -72,6 +78,7 @@ func New(b *telebot.Bot, s Storage, p PandaClient, defaultTeams []domain.TeamInf
 		defaultTeams: defaultTeams,
 		digestHours:  config.NormalizeDigestHours(digestPresetHours),
 		awaitingHour: make(map[int64]bool),
+		awaitingTZ:   make(map[int64]bool),
 		broadcastCh:  make(chan BroadcastTask, 10000),
 		mainMenu:     menu,
 		btnSchedule:  menu.Text("📅 Узнать расписание"),
