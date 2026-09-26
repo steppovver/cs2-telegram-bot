@@ -15,6 +15,7 @@ type Config struct {
 	Debug             bool              `json:"debug"`
 	DefaultTeams      []domain.TeamInfo `json:"default_teams"`
 	DigestPresetHours []int             `json:"digest_preset_hours"`
+	AdminIDs          []int64           `json:"admin_ids"`
 }
 
 type configFile struct {

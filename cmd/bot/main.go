@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -21,7 +22,13 @@ import (
 
 func main() {
 	configPath := flag.String("config", "config.json", "Путь к файлу конфигурации")
+	showVersion := flag.Bool("version", false, "Показать версию сборки и выйти")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("cs2bot %s (сборка %s)\n", bot.Version, bot.BuildDate)
+		return
+	}
 
 	// Загружаем конфигурацию
 	cfg, err := config.Load(*configPath)
@@ -68,7 +75,7 @@ func main() {
 		{Text: "start", Description: "Открыть главное меню"},
 	})
 
-	botApp := bot.New(tb, db, pandaClient, cfg.DefaultTeams, cfg.DigestPresetHours)
+	botApp := bot.New(tb, db, pandaClient, cfg.DefaultTeams, cfg.DigestPresetHours, cfg.AdminIDs)
 	botApp.RegisterHandlers()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

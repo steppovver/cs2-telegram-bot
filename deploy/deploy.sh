@@ -21,7 +21,13 @@ DEPLOY_DIR="${DEPLOY_DIR:-/opt/cs2bot}"
 SSH="ssh -p $DEPLOY_PORT $DEPLOY_USER@$DEPLOY_HOST"
 SCP="scp -P $DEPLOY_PORT"
 
-GOOS=linux GOARCH=amd64 go build -o cs2bot ./cmd/bot
+# Версия сборки из git (тег + коммиты + sha, напр. v0.1.0-3-gabc1234),
+# без git — dev. Дата сборки в UTC.
+VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+BUILD_DATE="$(date -u +%Y-%m-%d)"
+LDFLAGS="-X cs2bot/internal/bot.Version=$VERSION -X cs2bot/internal/bot.BuildDate=$BUILD_DATE"
+
+GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o cs2bot ./cmd/bot
 GOOS=linux GOARCH=amd64 go build -o teams_puller ./cmd/teams_puller
 
 $SSH "systemctl stop cs2bot"

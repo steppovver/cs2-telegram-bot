@@ -47,6 +47,13 @@ type BroadcastTask struct {
 	Text   string
 }
 
+// Version и BuildDate подставляются при сборке через ldflags
+// (см. deploy/deploy.sh). По умолчанию — dev-сборка.
+var (
+	Version   = "dev"
+	BuildDate = "unknown"
+)
+
 type Bot struct {
 	telebot      *telebot.Bot
 	storage      Storage
@@ -68,16 +75,23 @@ type Bot struct {
 	awaitingTZMu sync.Mutex
 
 	digestHours []int
+
+	admins map[int64]bool
 }
 
-func New(b *telebot.Bot, s Storage, p PandaClient, defaultTeams []domain.TeamInfo, digestPresetHours []int) *Bot {
+func New(b *telebot.Bot, s Storage, p PandaClient, defaultTeams []domain.TeamInfo, digestPresetHours []int, adminIDs []int64) *Bot {
 	menu := &telebot.ReplyMarkup{ResizeKeyboard: true, IsPersistent: true}
+	admins := make(map[int64]bool, len(adminIDs))
+	for _, id := range adminIDs {
+		admins[id] = true
+	}
 	botApp := &Bot{
 		telebot:      b,
 		storage:      s,
 		panda:        p,
 		defaultTeams: defaultTeams,
 		digestHours:  config.NormalizeDigestHours(digestPresetHours),
+		admins:       admins,
 		awaitingHour: make(map[int64]bool),
 		awaitingTZ:   make(map[int64]bool),
 		broadcastCh:  make(chan BroadcastTask, 10000),
@@ -102,6 +116,7 @@ func (b *Bot) RegisterHandlers() {
 	b.telebot.Use(b.loggingMiddleware)
 
 	b.telebot.Handle("/start", b.handleStart)
+	b.telebot.Handle("/version", b.handleVersion)
 	b.telebot.Handle(&b.btnSchedule, b.handleSchedule)
 	b.telebot.Handle(&b.btnSubscribe, b.handleSubscribe)
 	b.telebot.Handle(&b.btnSearch, b.handleSearchPrompt)
