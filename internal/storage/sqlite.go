@@ -317,7 +317,7 @@ func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, te
 	}
 
 	timeChanged = dbTimeUnix != m.Time.Unix()
-	teamsChanged = (dbTeamA != m.TeamA) || (dbTeamB != m.TeamB)
+	teamsChanged = !sameTeamPair(dbTeamA, dbTeamB, m.TeamA, m.TeamB)
 	statusChanged = dbStatus != m.Status
 
 	slog.Debug("ProcessMatch update",
@@ -340,6 +340,12 @@ func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, te
 		return false, false, false, false, time.Time{}, "", "", "", err
 	}
 	return false, timeChanged, teamsChanged, statusChanged, time.Unix(dbTimeUnix, 0), dbTeamA, dbTeamB, dbStatus, nil
+}
+
+// sameTeamPair сравнивает пары команд без учета порядка: API не гарантирует
+// порядок opponents, и простая перестановка местами — не смена соперника.
+func sameTeamPair(a1, b1, a2, b2 string) bool {
+	return (a1 == a2 && b1 == b2) || (a1 == b2 && b1 == a2)
 }
 
 func (s *Storage) GetUpcomingUserMatches(userID int64) ([]domain.Match, error) {
