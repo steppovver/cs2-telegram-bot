@@ -290,9 +290,10 @@ func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, te
 
 	var dbTimeUnix int64
 	var dbTeamA, dbTeamB, dbStatus string
+	var dbNotified int
 
-	err = tx.QueryRow(`SELECT begin_at, team_a, team_b, COALESCE(status, '') FROM matches WHERE id = ?`, m.ID).
-		Scan(&dbTimeUnix, &dbTeamA, &dbTeamB, &dbStatus)
+	err = tx.QueryRow(`SELECT begin_at, team_a, team_b, COALESCE(status, ''), COALESCE(notified, 0) FROM matches WHERE id = ?`, m.ID).
+		Scan(&dbTimeUnix, &dbTeamA, &dbTeamB, &dbStatus, &dbNotified)
 
 	if err == sql.ErrNoRows {
 		slog.Debug("ProcessMatch new",
@@ -328,9 +329,16 @@ func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, te
 		slog.Bool("status_changed", statusChanged),
 	)
 
+	// Сдвиг времени перевооружает напоминание "за 5 минут": иначе после
+	// уже отправленного напоминания повторное не придет никогда.
+	newNotified := dbNotified
+	if timeChanged {
+		newNotified = 0
+	}
+
 	_, err = tx.Exec(
-		`UPDATE matches SET begin_at = ?, team_a = ?, team_b = ?, team_a_id = ?, team_b_id = ?, status = ? WHERE id = ?`,
-		m.Time.Unix(), m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Status, m.ID,
+		`UPDATE matches SET begin_at = ?, team_a = ?, team_b = ?, team_a_id = ?, team_b_id = ?, status = ?, notified = ? WHERE id = ?`,
+		m.Time.Unix(), m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Status, newNotified, m.ID,
 	)
 	if err != nil {
 		return false, false, false, false, time.Time{}, "", "", "", err
