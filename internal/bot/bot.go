@@ -24,6 +24,7 @@ type Storage interface {
 	CleanStaleRunningMatches(apiMatchIDs map[int]bool)
 	Subscribe(userID, teamID int64, teamName string) error
 	Unsubscribe(userID, teamID int64) error
+	RemoveUser(userID int64) error
 	SearchTeams(query string) ([]domain.SearchedTeam, error)
 	GetTeamsByIDs(ids []int) ([]domain.TeamInfo, error)
 	GetDigestSettings(userID int64) (domain.DigestSettings, error)

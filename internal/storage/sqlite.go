@@ -528,6 +528,14 @@ func (s *Storage) Unsubscribe(userID, teamID int64) error {
 	return err
 }
 
+// RemoveUser удаляет пользователя целиком. Подписки, настройки дайджеста
+// и часовой пояс чистятся каскадом по FOREIGN KEY ... ON DELETE CASCADE.
+// Вызывается рассылкой при мертвых получателях (бан бота, удаление чата).
+func (s *Storage) RemoveUser(userID int64) error {
+	_, err := s.db.Exec(`DELETE FROM users WHERE id = ?`, userID)
+	return err
+}
+
 func (s *Storage) GetUsersByTeamIDs(teamAID, teamBID int) ([]int64, error) {
 	rows, err := s.db.Query(`
 		SELECT DISTINCT user_id
