@@ -54,6 +54,15 @@ CREATE TABLE IF NOT EXISTS user_digest (
 	FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_user_digest_due ON user_digest(enabled, hour, last_sent_date);
+CREATE TABLE IF NOT EXISTS user_settings (
+	user_id INTEGER PRIMARY KEY,
+	utc_offset INTEGER NOT NULL DEFAULT 3,
+	FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS meta (
+	key TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);
 `
 
 type Storage struct {
@@ -129,6 +138,11 @@ func NewStorage(dbPath string) (*Storage, error) {
 
 	if err := s.backfillMatchTeamIDs(); err != nil {
 		slog.Warn("Не удалось заполнить ID команд в матчах", slog.Any("error", err))
+	}
+
+	if err := s.migrateDigestHoursToUTC(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("ошибка миграции часов дайджеста: %w", err)
 	}
 
 	var count int
@@ -279,6 +293,34 @@ func (s *Storage) backfillMatchTeamIDs() error {
 		WHERE team_b_id IS NULL OR team_b_id = 0
 	`)
 	return err
+}
+
+// migrateDigestHoursToUTC разово переводит user_digest.hour из локального
+// wall-time в UTC: hour_utc = (hour_local - offset). Идемпотентно через meta.
+// Старый прод хранил МСК-часы без строк в user_settings -> COALESCE дает 3.
+func (s *Storage) migrateDigestHoursToUTC() error {
+	var v string
+	err := s.db.QueryRow(`SELECT value FROM meta WHERE key = 'digest_hour_version'`).Scan(&v)
+	if err == nil && v == "2" {
+		return nil
+	}
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if _, err := s.db.Exec(`
+		UPDATE user_digest SET hour = (
+			(hour - COALESCE(
+				(SELECT utc_offset FROM user_settings WHERE user_settings.user_id = user_digest.user_id),
+				3) + 48) % 24)
+	`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`INSERT INTO meta (key, value) VALUES ('digest_hour_version', '2')
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`); err != nil {
+		return err
+	}
+	slog.Info("Часы дайджеста переведены в UTC")
+	return nil
 }
 
 func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, teamsChanged bool, statusChanged bool, oldTime time.Time, oldTeamA string, oldTeamB string, oldStatus string, err error) {
@@ -652,22 +694,105 @@ func (s *Storage) GetTeamsByIDs(ids []int) ([]domain.TeamInfo, error) {
 }
 
 const (
-	defaultDigestHour = 10
-	minDigestHour     = 0
-	maxDigestHour     = 23
+	// Дефолт 10:00 при UTC+3 == 07:00 UTC. Колонка hour хранит UTC.
+	defaultDigestHourUTC = 7
+	minDigestHour        = 0
+	maxDigestHour        = 23
 )
 
-func (s *Storage) GetDigestSettings(userID int64) (domain.DigestSettings, error) {
-	var enabled int
-	var hour int
-	err := s.db.QueryRow(`SELECT enabled, hour FROM user_digest WHERE user_id = ?`, userID).Scan(&enabled, &hour)
+const (
+	DefaultUTCOffset = 3
+	MinUTCOffset     = -12
+	MaxUTCOffset     = 14
+)
+
+func NormalizeUTCOffset(o int) int {
+	if o < MinUTCOffset || o > MaxUTCOffset {
+		return DefaultUTCOffset
+	}
+	return o
+}
+
+func (s *Storage) GetUserOffset(userID int64) (int, error) {
+	var off int
+	err := s.db.QueryRow(`SELECT utc_offset FROM user_settings WHERE user_id = ?`, userID).Scan(&off)
 	if err == sql.ErrNoRows {
-		return domain.DigestSettings{Enabled: false, Hour: defaultDigestHour}, nil
+		return DefaultUTCOffset, nil
+	}
+	if err != nil {
+		return DefaultUTCOffset, err
+	}
+	return NormalizeUTCOffset(off), nil
+}
+
+func (s *Storage) SetUserOffset(userID int64, offset int) error {
+	if offset < MinUTCOffset || offset > MaxUTCOffset {
+		return fmt.Errorf("сдвиг должен быть от %d до %+d", MinUTCOffset, MaxUTCOffset)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO users (id) VALUES (?)`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO user_settings (user_id, utc_offset)
+		VALUES (?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET utc_offset = excluded.utc_offset`,
+		userID, offset); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Storage) GetUserOffsets(userIDs []int64) (map[int64]int, error) {
+	out := make(map[int64]int, len(userIDs))
+	for _, id := range userIDs {
+		out[id] = DefaultUTCOffset
+	}
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+	args := make([]any, len(userIDs))
+	placeholders := make([]string, len(userIDs))
+	for i, id := range userIDs {
+		args[i] = id
+		placeholders[i] = "?"
+	}
+	query := fmt.Sprintf("SELECT user_id, utc_offset FROM user_settings WHERE user_id IN (%s)",
+		strings.Join(placeholders, ","))
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var off int
+		if err := rows.Scan(&id, &off); err != nil {
+			continue
+		}
+		out[id] = NormalizeUTCOffset(off)
+	}
+	return out, rows.Err()
+}
+
+func (s *Storage) GetDigestSettings(userID int64) (domain.DigestSettings, error) {
+	// HourUTC отдаем как есть из БД, конвертация в wall-time — задача bot-слоя.
+	var enabled int
+	var hourUTC int
+	err := s.db.QueryRow(`SELECT enabled, hour FROM user_digest WHERE user_id = ?`, userID).Scan(&enabled, &hourUTC)
+	if err == sql.ErrNoRows {
+		off, _ := s.GetUserOffset(userID)
+		return domain.DigestSettings{Enabled: false, HourUTC: defaultDigestHourUTC, UtcOffset: off}, nil
 	}
 	if err != nil {
 		return domain.DigestSettings{}, err
 	}
-	return domain.DigestSettings{Enabled: enabled != 0, Hour: hour}, nil
+	off, _ := s.GetUserOffset(userID)
+	return domain.DigestSettings{Enabled: enabled != 0, HourUTC: hourUTC, UtcOffset: off}, nil
 }
 
 func (s *Storage) SetDigestEnabled(userID int64, enabled bool) error {
@@ -687,14 +812,15 @@ func (s *Storage) SetDigestEnabled(userID int64, enabled bool) error {
 	if _, err := tx.Exec(`INSERT INTO user_digest (user_id, enabled, hour)
 		VALUES (?, ?, ?)
 		ON CONFLICT(user_id) DO UPDATE SET enabled = excluded.enabled`,
-		userID, enabledInt, defaultDigestHour); err != nil {
+		userID, enabledInt, defaultDigestHourUTC); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func (s *Storage) SetDigestHour(userID int64, hour int) error {
-	if hour < minDigestHour || hour > maxDigestHour {
+// SetDigestHour пишет час в UTC (конвертация wall->UTC — задача bot-слоя).
+func (s *Storage) SetDigestHour(userID int64, hourUTC int) error {
+	if hourUTC < minDigestHour || hourUTC > maxDigestHour {
 		return fmt.Errorf("час должен быть от %d до %d", minDigestHour, maxDigestHour)
 	}
 	tx, err := s.db.Begin()
@@ -709,27 +835,34 @@ func (s *Storage) SetDigestHour(userID int64, hour int) error {
 	if _, err := tx.Exec(`INSERT INTO user_digest (user_id, enabled, hour)
 		VALUES (?, ?, ?)
 		ON CONFLICT(user_id) DO UPDATE SET hour = excluded.hour`,
-		userID, 0, hour); err != nil {
+		userID, 0, hourUTC); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func (s *Storage) GetDigestDueUsers(hour int, today string) ([]int64, error) {
-	rows, err := s.db.Query(`SELECT user_id FROM user_digest
-		WHERE enabled = 1 AND hour = ? AND last_sent_date != ?`, hour, today)
+func (s *Storage) GetDigestDueUsers(hourUTC int, slot string) ([]domain.DigestDueUser, error) {
+	rows, err := s.db.Query(`SELECT d.user_id, d.hour, d.last_sent_date,
+		COALESCE(st.utc_offset, ?) AS utc_offset
+		FROM user_digest d
+		LEFT JOIN user_settings st ON st.user_id = d.user_id
+		WHERE d.enabled = 1 AND d.hour = ? AND d.last_sent_date != ?`,
+		DefaultUTCOffset, hourUTC, slot)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var users []int64
+	var users []domain.DigestDueUser
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var u domain.DigestDueUser
+		var lastSent string
+		if err := rows.Scan(&u.UserID, &u.HourUTC, &lastSent, &u.UtcOffset); err != nil {
 			return nil, err
 		}
-		users = append(users, id)
+		u.LastSent = lastSent
+		u.UtcOffset = NormalizeUTCOffset(u.UtcOffset)
+		users = append(users, u)
 	}
 	return users, rows.Err()
 }

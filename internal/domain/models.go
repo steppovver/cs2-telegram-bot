@@ -24,6 +24,14 @@ type SearchedTeam struct {
 }
 
 type DigestSettings struct {
-	Enabled bool
-	Hour    int
+	Enabled   bool
+	HourUTC   int
+	UtcOffset int
+}
+
+type DigestDueUser struct {
+	UserID    int64
+	HourUTC   int
+	UtcOffset int
+	LastSent  string
 }
