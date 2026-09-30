@@ -15,13 +15,9 @@ func formatTGTime(t time.Time, tgFormat, fallbackLayout string, utcOffset int) s
 		t.Unix(), tgFormat, local.Format(fallbackLayout), utcOffset)
 }
 
-func splitDigestText(text string) []string {
-	return chunkLines(text, tgChunkLimit)
-}
-
 // chunkLines режет текст на куски по границам строк, чтобы каждый влез в limit.
-// Единственное место с логикой нарезки: splitDigestText и sendChunked —
-// тонкие обертки над ней.
+// Единственное место с логикой нарезки: нарезка очереди — внутри enqueueToUser,
+// немедленная отправка — в sendChunked.
 func chunkLines(text string, limit int) []string {
 	if len(text) <= limit {
 		return []string{text}

@@ -79,8 +79,9 @@ func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int
 		return
 	}
 
-	chunks := splitDigestText("⏰ <b>Матчи ваших команд на 24 часа:</b>\n\n" + strings.Join(lines, "\n") + "\n")
-	if !b.enqueueDigest(ctx, userID, chunks) {
+	text := "⏰ <b>Матчи ваших команд на 24 часа:</b>\n\n" + strings.Join(lines, "\n") + "\n"
+	ok, dropped := b.enqueueToUser(ctx, userID, text)
+	if !ok || dropped > 0 {
 		slog.Warn("Дайджест не поставлен в очередь (переполнение), повтор на следующем тике",
 			slog.Int64("user_id", userID))
 		return
@@ -88,8 +89,7 @@ func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int
 	b.markDigestSent(userID, slot)
 	slog.Debug("Дайджест поставлен в очередь",
 		slog.Int64("user_id", userID),
-		slog.Int("lines", len(lines)),
-		slog.Int("chunks", len(chunks)))
+		slog.Int("lines", len(lines)))
 }
 
 // buildDigestLines фильтрует матчи без соперника/времени и форматирует
@@ -114,24 +114,6 @@ func buildDigestLines(matches []domain.Match, subs []domain.TeamInfo, utcOffset 
 		lines = append(lines, fmt.Sprintf("%s | %s vs %s", timeStr, teamA, teamB))
 	}
 	return lines
-}
-
-// enqueueDigest неблокирующе кладет чанки в очередь рассылки.
-// false — очередь полна или контекст отменен, вызывающий код повторит позже.
-func (b *Bot) enqueueDigest(ctx context.Context, userID int64, chunks []string) bool {
-	for _, chunk := range chunks {
-		select {
-		case <-ctx.Done():
-			return false
-		default:
-		}
-		select {
-		case b.broadcastCh <- BroadcastTask{UserID: userID, Text: chunk}:
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 func (b *Bot) markDigestSent(userID int64, slot string) {

@@ -104,6 +104,30 @@ func (b *Bot) StartBroadcaster(ctx context.Context) {
 	}
 }
 
+// enqueueToUser неблокирующе кладет тексты одному юзеру в очередь рассылки,
+// нарезая каждый через chunkLines. Возвращает ok=false при отмене контекста
+// и число отброшенных чанков (очередь полна). Лог с контекстом
+// (какой матч/дайджест) — задача вызывающего.
+func (b *Bot) enqueueToUser(ctx context.Context, userID int64, texts ...string) (ok bool, dropped int) {
+	for _, text := range texts {
+		for _, chunk := range chunkLines(text, tgChunkLimit) {
+			// Быстрая проверка отмены без блокировки воркера.
+			select {
+			case <-ctx.Done():
+				return false, dropped
+			default:
+			}
+
+			select {
+			case b.broadcastCh <- BroadcastTask{UserID: userID, Text: chunk}:
+			default:
+				dropped++
+			}
+		}
+	}
+	return true, dropped
+}
+
 func (b *Bot) broadcastToFans(ctx context.Context, match domain.Match, build func(offset int) string) bool {
 	users, err := b.storage.GetUsersByTeamIDs(match.TeamAID, match.TeamBID)
 	if err != nil {
@@ -141,17 +165,10 @@ func (b *Bot) broadcastToFans(ctx context.Context, match domain.Match, build fun
 	for off, group := range byOffset {
 		msg := build(off)
 		for _, userID := range group {
-			// Быстрая проверка отмены без блокировки поллера.
-			select {
-			case <-ctx.Done():
+			ok, d := b.enqueueToUser(ctx, userID, msg)
+			dropped += d
+			if !ok {
 				return false
-			default:
-			}
-
-			select {
-			case b.broadcastCh <- BroadcastTask{UserID: userID, Text: msg}:
-			default:
-				dropped++
 			}
 		}
 	}

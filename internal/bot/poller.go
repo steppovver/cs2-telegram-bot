@@ -5,7 +5,11 @@ import (
 	"fmt"
 	"html"
 	"log/slog"
+	"sort"
+	"strings"
 	"time"
+
+	"cs2bot/internal/domain"
 )
 
 func (b *Bot) StartPoller(ctx context.Context) {
@@ -23,6 +27,24 @@ func (b *Bot) StartPoller(ctx context.Context) {
 			b.runPollerCycle(ctx)
 		}
 	}
+}
+
+type matchEventKind int
+
+const (
+	eventNew matchEventKind = iota
+	eventStarted
+	eventOpponent
+	eventTimeChanged
+)
+
+type matchEvent struct {
+	match       domain.Match
+	kind        matchEventKind
+	timeChanged bool
+	oldTime     time.Time
+	oldTeamA    string
+	oldTeamB    string
 }
 
 func (b *Bot) runPollerCycle(ctx context.Context) {
@@ -50,6 +72,9 @@ func (b *Bot) runPollerCycle(ctx context.Context) {
 		apiMatchIDs[m.ID] = true
 	}
 
+	// Собираем события цикла, рассылка — одним сообщением на пользователя
+	// после цикла (иначе при пачке новых матчей каждому прилетает спам).
+	var events []matchEvent
 	for _, match := range matches {
 		isNew, timeChanged, teamsChanged, statusChanged, oldTime, oldTeamA, oldTeamB, oldStatus, err := b.storage.ProcessMatch(match)
 		if err != nil {
@@ -67,51 +92,145 @@ func (b *Bot) runPollerCycle(ctx context.Context) {
 			continue
 		}
 
-		var build func(off int) string
-		escA, escB := html.EscapeString(match.TeamA), html.EscapeString(match.TeamB)
-		escOldA, escOldB := html.EscapeString(oldTeamA), html.EscapeString(oldTeamB)
-
-		if isNew {
-			build = func(off int) string {
-				timeStr := formatTGTime(match.Time, "dt", "15:04 02.01", off)
-				return fmt.Sprintf("🆕 <b>Добавлен новый матч!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s",
-					escA, escB, timeStr)
-			}
-		} else if match.Status == "running" && statusChanged && oldStatus != "running" {
-			build = func(off int) string {
-				timeStr := formatTGTime(match.Time, "dt", "15:04 02.01", off)
-				return fmt.Sprintf("🔴 <b>Матч начался!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s",
-					escA, escB, timeStr)
-			}
-		} else if teamsChanged {
-			build = func(off int) string {
-				timeStr := formatTGTime(match.Time, "dt", "15:04 02.01", off)
-				timeText := fmt.Sprintf("⏰ Время: %s", timeStr)
-				if timeChanged {
-					oldTimeStr := formatTGTime(oldTime, "dt", "15:04 02.01", off)
-					timeText = fmt.Sprintf("<s>Время: %s</s>\n⏰ Новое: %s", oldTimeStr, timeStr)
-				}
-				return fmt.Sprintf("🔄 <b>Определился соперник!</b>\n\n<s>%s vs %s</s>\n🛡 <b>%s</b> vs <b>%s</b>\n%s",
-					escOldA, escOldB, escA, escB, timeText)
-			}
-		} else if timeChanged {
-			build = func(off int) string {
-				timeStr := formatTGTime(match.Time, "dt", "15:04 02.01", off)
-				oldTimeStr := formatTGTime(oldTime, "dt", "15:04 02.01", off)
-				return fmt.Sprintf("⚠️ <b>Время матча изменено!</b>\n\n🛡 <b>%s</b> vs <b>%s</b>\n<s>Старое время: %s</s>\n⏰ Новое время: %s",
-					escA, escB, oldTimeStr, timeStr)
-			}
-		}
-
-		if build == nil {
+		ev := matchEvent{match: match, timeChanged: timeChanged, oldTime: oldTime, oldTeamA: oldTeamA, oldTeamB: oldTeamB}
+		switch {
+		case isNew:
+			ev.kind = eventNew
+		case match.Status == "running" && statusChanged && oldStatus != "running":
+			ev.kind = eventStarted
+		case teamsChanged:
+			ev.kind = eventOpponent
+		case timeChanged:
+			ev.kind = eventTimeChanged
+		default:
 			continue
 		}
-		if !b.broadcastToFans(ctx, match, build) {
-			slog.Warn("Уведомление не поставлено в очередь (переполнение или отмена)",
-				slog.Int("match_id", match.ID))
-		}
+		events = append(events, ev)
+	}
+
+	if len(events) > 0 {
+		b.broadcastMatchEvents(ctx, events)
 	}
 
 	b.storage.CleanStaleRunningMatches(apiMatchIDs)
 	b.storage.CleanOldMatches()
+}
+
+// broadcastMatchEvents раскладывает события цикла по пользователям и шлет
+// каждому одно объединенное сообщение (время — в его поясе).
+func (b *Bot) broadcastMatchEvents(ctx context.Context, events []matchEvent) {
+	userEvents := make(map[int64][]matchEvent)
+	for _, ev := range events {
+		users, err := b.storage.GetUsersByTeamIDs(ev.match.TeamAID, ev.match.TeamBID)
+		if err != nil {
+			slog.Error("Ошибка получения подписчиков матча",
+				slog.String("team_a", ev.match.TeamA),
+				slog.String("team_b", ev.match.TeamB),
+				slog.Any("error", err))
+			continue
+		}
+		for _, u := range users {
+			userEvents[u] = append(userEvents[u], ev)
+		}
+	}
+	if len(userEvents) == 0 {
+		return
+	}
+
+	ids := make([]int64, 0, len(userEvents))
+	for id := range userEvents {
+		ids = append(ids, id)
+	}
+	offsets, err := b.storage.GetUserOffsets(ids)
+	if err != nil {
+		slog.Error("Ошибка получения часовых поясов", slog.Any("error", err))
+		offsets = make(map[int64]int, len(ids))
+	}
+
+	slog.Info("Добавление объединенных уведомлений в очередь",
+		slog.Int("events", len(events)),
+		slog.Int("recipients", len(userEvents)))
+
+	dropped := 0
+	for userID, evts := range userEvents {
+		ok, d := b.enqueueToUser(ctx, userID, buildCombinedUpdateMessage(evts, offsets[userID]))
+		dropped += d
+		if !ok {
+			return
+		}
+	}
+
+	if dropped > 0 {
+		slog.Warn("Очередь рассылки переполнена, часть уведомлений отброшена",
+			slog.Int("dropped", dropped),
+			slog.Int("recipients", len(userEvents)),
+			slog.Int("queue_len", len(b.broadcastCh)),
+		)
+	}
+}
+
+// buildCombinedUpdateMessage собирает все события цикла для одного юзера
+// в одно сообщение, группируя по типу.
+func buildCombinedUpdateMessage(evts []matchEvent, off int) string {
+	var news, started, opponents, times []matchEvent
+	for _, ev := range evts {
+		switch ev.kind {
+		case eventNew:
+			news = append(news, ev)
+		case eventStarted:
+			started = append(started, ev)
+		case eventOpponent:
+			opponents = append(opponents, ev)
+		case eventTimeChanged:
+			times = append(times, ev)
+		}
+	}
+	// Внутри каждой секции — по времени начала, ближайшие сверху.
+	byTime := func(a, b matchEvent) bool { return a.match.Time.Before(b.match.Time) }
+	sort.Slice(started, func(i, j int) bool { return byTime(started[i], started[j]) })
+	sort.Slice(news, func(i, j int) bool { return byTime(news[i], news[j]) })
+	sort.Slice(opponents, func(i, j int) bool { return byTime(opponents[i], opponents[j]) })
+	sort.Slice(times, func(i, j int) bool { return byTime(times[i], times[j]) })
+
+	var sb strings.Builder
+	if len(started) > 0 {
+		sb.WriteString("🔴 <b>Матчи начались!</b>\n\n")
+		for _, ev := range started {
+			timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
+			sb.WriteString(fmt.Sprintf("🛡 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s\n\n",
+				html.EscapeString(ev.match.TeamA), html.EscapeString(ev.match.TeamB), timeStr))
+		}
+	}
+	if len(news) > 0 {
+		sb.WriteString("🆕 <b>Новые матчи!</b>\n\n")
+		for _, ev := range news {
+			timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
+			sb.WriteString(fmt.Sprintf("🛡 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s\n\n",
+				html.EscapeString(ev.match.TeamA), html.EscapeString(ev.match.TeamB), timeStr))
+		}
+	}
+	if len(opponents) > 0 {
+		sb.WriteString("🔄 <b>Определились соперники!</b>\n\n")
+		for _, ev := range opponents {
+			timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
+			timeText := fmt.Sprintf("⏰ Время: %s", timeStr)
+			if ev.timeChanged {
+				oldTimeStr := formatTGTime(ev.oldTime, "dt", "15:04 02.01", off)
+				timeText = fmt.Sprintf("<s>Время: %s</s>\n⏰ Новое: %s", oldTimeStr, timeStr)
+			}
+			sb.WriteString(fmt.Sprintf("<s>%s vs %s</s>\n🛡 <b>%s</b> vs <b>%s</b>\n%s\n\n",
+				html.EscapeString(ev.oldTeamA), html.EscapeString(ev.oldTeamB),
+				html.EscapeString(ev.match.TeamA), html.EscapeString(ev.match.TeamB), timeText))
+		}
+	}
+	if len(times) > 0 {
+		sb.WriteString("⚠️ <b>Время матчей изменено!</b>\n\n")
+		for _, ev := range times {
+			timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
+			oldTimeStr := formatTGTime(ev.oldTime, "dt", "15:04 02.01", off)
+			sb.WriteString(fmt.Sprintf("🛡 <b>%s</b> vs <b>%s</b>\n<s>Старое время: %s</s>\n⏰ Новое время: %s\n\n",
+				html.EscapeString(ev.match.TeamA), html.EscapeString(ev.match.TeamB), oldTimeStr, timeStr))
+		}
+	}
+	return strings.TrimSuffix(sb.String(), "\n")
 }
