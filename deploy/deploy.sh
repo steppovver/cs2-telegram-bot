@@ -21,9 +21,25 @@ DEPLOY_DIR="${DEPLOY_DIR:-/opt/cs2bot}"
 SSH="ssh -p $DEPLOY_PORT $DEPLOY_USER@$DEPLOY_HOST"
 SCP="scp -P $DEPLOY_PORT"
 
-# Версия сборки из git (тег + коммиты + sha, напр. v0.1.0-3-gabc1234),
-# без git — dev. Дата сборки в UTC.
-VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+# Версия сборки: <двухчастный-тег>.<коммиты-после-тега>, напр. v0.2.4.
+# Тег — последний vX.Y, достижимый из HEAD (линия поддержки считает свое).
+# Грязное дерево или отсутствие тега — ошибка деплоя, без git — dev.
+# Дата сборки в UTC.
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "ОШИБКА: грязное дерево — закоммить или спрятать изменения перед деплоем" >&2
+    exit 1
+  fi
+  TAG="$(git tag --list --merged HEAD | grep -E '^v[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+  if [ -z "$TAG" ]; then
+    echo "ОШИБКА: нет достижимого тега вида vX.Y — создай его (напр. git tag -a v0.2 -m v0.2)" >&2
+    exit 1
+  fi
+  COUNT="$(git rev-list "$TAG..HEAD" --count)"
+  VERSION="$TAG.$COUNT"
+else
+  VERSION="dev"
+fi
 BUILD_DATE="$(date -u +%Y-%m-%d)"
 LDFLAGS="-X cs2bot/internal/bot.Version=$VERSION -X cs2bot/internal/bot.BuildDate=$BUILD_DATE"
 
