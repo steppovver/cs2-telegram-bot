@@ -48,11 +48,12 @@ type BroadcastTask struct {
 	Text   string
 }
 
-// Version и BuildDate подставляются при сборке через ldflags
+// Version, BuildDate и BuildCommit подставляются при сборке через ldflags
 // (см. deploy/deploy.sh). По умолчанию — dev-сборка.
 var (
-	Version   = "dev"
-	BuildDate = "unknown"
+	Version     = "dev"
+	BuildDate   = "unknown"
+	BuildCommit = "unknown"
 )
 
 type Bot struct {

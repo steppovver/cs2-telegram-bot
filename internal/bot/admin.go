@@ -11,7 +11,7 @@ import (
 // versionText — единый текст версии для /version и админ-панели,
 // чтобы не разъезжались.
 func versionText() string {
-	return fmt.Sprintf("cs2bot %s\nсборка: %s", Version, BuildDate)
+	return fmt.Sprintf("cs2bot %s\nсборка: %s (%s)", Version, BuildDate, BuildCommit)
 }
 
 // handleVersion показывает версию сборки только админам.
@@ -55,8 +55,8 @@ func (b *Bot) handleAdminCallback(c telebot.Context) error {
 			slog.Error("Ошибка получения статистики", slog.Any("error", err))
 			return c.Respond(&telebot.CallbackResponse{Text: "Не удалось загрузить статистику."})
 		}
-		text = fmt.Sprintf("📊 <b>Статистика</b>\n\n👥 Пользователей: %d\n🔔 Подписок: %d\n⚽ Матчей в БД: %d\n\n🔖 Версия: %s (сборка %s)",
-			st.Users, st.Subscriptions, st.Matches, Version, BuildDate)
+		text = fmt.Sprintf("📊 <b>Статистика</b>\n\n👥 Пользователей: %d\n🔔 Подписок: %d\n⚽ Матчей в БД: %d\n\n🔖 Версия: %s (сборка %s, коммит %s)",
+			st.Users, st.Subscriptions, st.Matches, Version, BuildDate, BuildCommit)
 	case "version":
 		text = "🔖 <b>Версия</b>\n\n" + versionText()
 	default:

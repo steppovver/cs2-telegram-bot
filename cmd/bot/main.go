@@ -26,7 +26,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("cs2bot %s (сборка %s)\n", bot.Version, bot.BuildDate)
+		fmt.Printf("cs2bot %s (сборка %s, коммит %s)\n", bot.Version, bot.BuildDate, bot.BuildCommit)
 		return
 	}
 

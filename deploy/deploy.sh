@@ -36,12 +36,14 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
     exit 1
   fi
   COUNT="$(git rev-list "$TAG..HEAD" --count)"
+  SHORT_SHA="$(git rev-parse --short HEAD)"
   VERSION="$TAG.$COUNT"
 else
   VERSION="dev"
+  SHORT_SHA="unknown"
 fi
 BUILD_DATE="$(date -u +%Y-%m-%d)"
-LDFLAGS="-X cs2bot/internal/bot.Version=$VERSION -X cs2bot/internal/bot.BuildDate=$BUILD_DATE"
+LDFLAGS="-X cs2bot/internal/bot.Version=$VERSION -X cs2bot/internal/bot.BuildDate=$BUILD_DATE -X cs2bot/internal/bot.BuildCommit=$SHORT_SHA"
 
 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o cs2bot ./cmd/bot
 GOOS=linux GOARCH=amd64 go build -o teams_puller ./cmd/teams_puller
