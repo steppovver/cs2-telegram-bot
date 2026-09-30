@@ -155,9 +155,9 @@ func digestStatusText(enabled bool, hour, utcOffset int) string {
 func (b *Bot) buildDigestKeyboardRaw(enabled bool, hour, utcOffset int) *telebot.ReplyMarkup {
 	menu := &telebot.ReplyMarkup{}
 
-	toggleText := "✅ Включить"
+	toggleText := "Включить"
 	if enabled {
-		toggleText = "❌ Выключить"
+		toggleText = "Выключить"
 	}
 	rows := []telebot.Row{
 		menu.Row(menu.Data(toggleText, "digest", "toggle")),
