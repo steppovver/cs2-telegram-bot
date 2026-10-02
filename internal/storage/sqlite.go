@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -41,7 +42,8 @@ CREATE TABLE IF NOT EXISTS matches (
 	team_b_id INTEGER,
 	begin_at INTEGER,
 	notified INTEGER DEFAULT 0,
-	status TEXT
+	status TEXT,
+	streams_json TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_teams_name ON teams(name);
 CREATE INDEX IF NOT EXISTS idx_players_team_id ON players(team_id);
@@ -103,6 +105,7 @@ func InitSchema(db *sql.DB) error {
 		`ALTER TABLE matches ADD COLUMN team_a_id INTEGER;`,
 		`ALTER TABLE matches ADD COLUMN team_b_id INTEGER;`,
 		`ALTER TABLE matches ADD COLUMN status TEXT;`,
+		`ALTER TABLE matches ADD COLUMN streams_json TEXT DEFAULT '[]';`,
 	}
 	for _, q := range alters {
 		_, err := db.Exec(q)
@@ -323,6 +326,45 @@ func (s *Storage) migrateDigestHoursToUTC() error {
 	return nil
 }
 
+// encodeStreams сериализует весь список стримов в JSON для колонки streams_json.
+// Лимит max_streams_per_match применяется при рендере, а не в БД, чтобы смена
+// конфига не требовала перефетча API.
+func encodeStreams(streams []domain.MatchStream) string {
+	if len(streams) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(streams)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// decodeStreams разбирает streams_json обратно в слайс.
+// Пустые/битые значения дают nil — рендер покажет fallback на поиск.
+func decodeStreams(raw sql.NullString) []domain.MatchStream {
+	s := ""
+	if raw.Valid {
+		s = strings.TrimSpace(raw.String)
+	}
+	if s == "" || s == "[]" {
+		return nil
+	}
+	var out []domain.MatchStream
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return nil
+	}
+	// Отсекаем мусор без URL на случай старых/битых записей.
+	kept := out[:0]
+	for _, st := range out {
+		if strings.TrimSpace(st.URL) == "" {
+			continue
+		}
+		kept = append(kept, st)
+	}
+	return kept
+}
+
 func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, teamsChanged bool, statusChanged bool, oldTime time.Time, oldTeamA string, oldTeamB string, oldStatus string, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -345,8 +387,8 @@ func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, te
 			slog.Int64("begin_at", m.Time.Unix()),
 		)
 		_, err = tx.Exec(
-			`INSERT INTO matches (id, team_a, team_b, team_a_id, team_b_id, begin_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			m.ID, m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Time.Unix(), m.Status,
+			`INSERT INTO matches (id, team_a, team_b, team_a_id, team_b_id, begin_at, status, streams_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			m.ID, m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Time.Unix(), m.Status, encodeStreams(m.Streams),
 		)
 		if err != nil {
 			return false, false, false, false, time.Time{}, "", "", "", err
@@ -379,8 +421,8 @@ func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, te
 	}
 
 	_, err = tx.Exec(
-		`UPDATE matches SET begin_at = ?, team_a = ?, team_b = ?, team_a_id = ?, team_b_id = ?, status = ?, notified = ? WHERE id = ?`,
-		m.Time.Unix(), m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Status, newNotified, m.ID,
+		`UPDATE matches SET begin_at = ?, team_a = ?, team_b = ?, team_a_id = ?, team_b_id = ?, status = ?, notified = ?, streams_json = ? WHERE id = ?`,
+		m.Time.Unix(), m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Status, newNotified, encodeStreams(m.Streams), m.ID,
 	)
 	if err != nil {
 		return false, false, false, false, time.Time{}, "", "", "", err
@@ -431,7 +473,7 @@ func (s *Storage) GetUpcomingUserMatches(userID int64) ([]domain.Match, error) {
 
 func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, '')
+		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.streams_json, '[]')
 		FROM matches m
 		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
 		WHERE s.user_id = ? AND m.begin_at <= ? AND m.status = 'running'
@@ -448,13 +490,15 @@ func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
 		var unixTime int64
 		var teamAID, teamBID sql.NullInt64
 		var status string
-		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status); err != nil {
+		var streamsRaw sql.NullString
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status, &streamsRaw); err != nil {
 			continue
 		}
 		m.Time = time.Unix(unixTime, 0)
 		m.TeamAID = int(teamAID.Int64)
 		m.TeamBID = int(teamBID.Int64)
 		m.Status = status
+		m.Streams = decodeStreams(streamsRaw)
 		matches = append(matches, m)
 	}
 	return matches, rows.Err()

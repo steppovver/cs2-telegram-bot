@@ -153,7 +153,7 @@ func (b *Bot) broadcastMatchEvents(ctx context.Context, events []matchEvent) {
 
 	dropped := 0
 	for userID, evts := range userEvents {
-		ok, d := b.enqueueToUser(ctx, userID, buildCombinedUpdateMessage(evts, offsets[userID]))
+		ok, d := b.enqueueToUser(ctx, userID, buildCombinedUpdateMessage(evts, offsets[userID], b.maxStreams))
 		dropped += d
 		if !ok {
 			return
@@ -170,8 +170,8 @@ func (b *Bot) broadcastMatchEvents(ctx context.Context, events []matchEvent) {
 }
 
 // buildCombinedUpdateMessage собирает все события цикла для одного юзера
-// в одно сообщение, группируя по типу.
-func buildCombinedUpdateMessage(evts []matchEvent, off int) string {
+// в одно сообщение, группируя по типу. maxStreams: 0 = все стримы.
+func buildCombinedUpdateMessage(evts []matchEvent, off int, maxStreams int) string {
 	var news, started, opponents, times []matchEvent
 	for _, ev := range evts {
 		switch ev.kind {
@@ -198,7 +198,7 @@ func buildCombinedUpdateMessage(evts []matchEvent, off int) string {
 		for _, ev := range started {
 			timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
 			sb.WriteString(fmt.Sprintf("🛡 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s\n%s\n\n",
-				html.EscapeString(ev.match.TeamA), html.EscapeString(ev.match.TeamB), timeStr, streamLine(ev.match)))
+				html.EscapeString(ev.match.TeamA), html.EscapeString(ev.match.TeamB), timeStr, streamLine(ev.match, maxStreams)))
 		}
 	}
 	if len(news) > 0 {

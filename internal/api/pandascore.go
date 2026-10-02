@@ -191,7 +191,8 @@ func (c *Client) fetchMatchesChunk(ctx context.Context, teamIDs []string) ([]dom
 	return allMatches, nil
 }
 
-// mapPandaStreams выбирает до 2 лучших трансляций из streams_list.
+// mapPandaStreams выбирает все трансляции из streams_list (без обрезки:
+// лимит применяется при рендере через max_streams_per_match).
 // Приоритет: official + main, затем русский, затем английский.
 // URL: raw_url предпочтительнее embed_url. Дубли по URL убираем.
 // Если streams_list пуст, но есть official_stream_url — возвращаем его.
@@ -241,9 +242,6 @@ func mapPandaStreams(pm pandaMatch) []domain.MatchStream {
 		for j := i; j > 0 && score(out[j]) > score(out[j-1]); j-- {
 			out[j], out[j-1] = out[j-1], out[j]
 		}
-	}
-	if len(out) > 2 {
-		out = out[:2]
 	}
 	return out
 }

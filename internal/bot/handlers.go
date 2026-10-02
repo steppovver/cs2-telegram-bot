@@ -130,7 +130,7 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 
 	var sb strings.Builder
 
-	// Сначала live-матчи
+	// Сначала live-матчи (стримы уже в БД, API не дергаем)
 	if len(liveMatches) > 0 {
 		sb.WriteString("🔴 <b>Сейчас играют:</b>\n\n")
 		for _, match := range liveMatches {
@@ -143,7 +143,7 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 					teamB = "<b>" + teamB + "</b>"
 				}
 			}
-			sb.WriteString(fmt.Sprintf("%s vs %s\n", teamA, teamB))
+			sb.WriteString(fmt.Sprintf("%s vs %s\n%s\n", teamA, teamB, streamLine(match, b.maxStreams)))
 		}
 		sb.WriteString("\n")
 	}
