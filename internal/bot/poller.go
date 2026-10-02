@@ -197,8 +197,8 @@ func buildCombinedUpdateMessage(evts []matchEvent, off int) string {
 		sb.WriteString("🔴 <b>Матчи начались!</b>\n\n")
 		for _, ev := range started {
 			timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
-			sb.WriteString(fmt.Sprintf("🛡 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s\n\n",
-				html.EscapeString(ev.match.TeamA), html.EscapeString(ev.match.TeamB), timeStr))
+			sb.WriteString(fmt.Sprintf("🛡 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s\n%s\n\n",
+				html.EscapeString(ev.match.TeamA), html.EscapeString(ev.match.TeamB), timeStr, streamLine(ev.match)))
 		}
 	}
 	if len(news) > 0 {

@@ -10,6 +10,16 @@ type Match struct {
 	TeamBID int
 	Time    time.Time
 	Status  string
+	Streams []MatchStream
+}
+
+// MatchStream — одна трансляция матча из PandaScore (streams_list).
+// URL — прямая ссылка (raw_url, fallback на embed_url).
+type MatchStream struct {
+	URL      string
+	Language string
+	Official bool
+	Main     bool
 }
 
 type TeamInfo struct {

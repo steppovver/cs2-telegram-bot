@@ -12,10 +12,12 @@ teams.db-journal
 teams.db-shm
 teams.db-wal
 
-# Скомпилированные бинарники
-cs2bot
-teams_puller
-cs2bot.exe
+# Скомпилированные бинарники (якорь на корень, иначе `bot`
+# матчится на директории `cmd/bot/` и `internal/bot/` и прячет их из git)
+/cs2bot
+/teams_puller
+/cs2bot.exe
+/bot
 *.exe
 
 # Зависимости среды разработки

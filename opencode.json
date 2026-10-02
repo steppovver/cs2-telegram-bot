@@ -1,0 +1,31 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": "opencode-zen",
+  "model": "meta/muse-spark-1.3-free",
+  "temperature": 0.1,
+  "systemPromptFiles": [
+    "OPENCODE.md"
+  ],
+  "ignore": [
+    ".git/**",
+    ".gigacode_vsc/**",
+    "*.db",
+    "*.sqlite",
+    ".env"
+  ],
+  "tools": {
+    "terminal": {
+      "timeout": 60,
+      "allowedCommands": [
+        "go build ./...",
+        "go build ./cmd/bot",
+        "go build ./cmd/teams_puller",
+        "go test ./...",
+        "go vet ./...",
+        "go mod tidy",
+        "git status",
+        "git diff"
+      ]
+    }
+  }
+}
