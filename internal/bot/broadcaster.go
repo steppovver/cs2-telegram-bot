@@ -24,7 +24,8 @@ func (b *Bot) StartBroadcaster(ctx context.Context) {
 	defer limiter.Stop()
 
 	send := func(task BroadcastTask) {
-		if _, err := b.telebot.Send(telebot.ChatID(task.UserID), task.Text, telebot.ModeHTML); err != nil {
+		// NoPreview глобально: ссылки на стримы не должны тянуть превью видео.
+		if _, err := b.telebot.Send(telebot.ChatID(task.UserID), task.Text, telebot.ModeHTML, telebot.NoPreview); err != nil {
 			// FloodWait: Telegram просит подождать — ждем RetryAfter и
 			// повторяем один раз. Сон здесь намеренный: лимит глобальный,
 			// слать раньше нельзя, очередь подождет.
@@ -42,7 +43,7 @@ func (b *Bot) StartBroadcaster(ctx context.Context) {
 					return
 				case <-time.After(wait):
 				}
-				if _, err := b.telebot.Send(telebot.ChatID(task.UserID), task.Text, telebot.ModeHTML); err != nil {
+				if _, err := b.telebot.Send(telebot.ChatID(task.UserID), task.Text, telebot.ModeHTML, telebot.NoPreview); err != nil {
 					slog.Warn("Повторная отправка после FloodWait не удалась",
 						slog.Int64("user_id", task.UserID), slog.Any("error", err))
 				}

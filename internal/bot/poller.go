@@ -195,9 +195,12 @@ func buildCombinedUpdateMessage(evts []matchEvent, off int, maxStreams int) stri
 	var sb strings.Builder
 	if len(started) > 0 {
 		sb.WriteString("🔴 <b>Матчи начались!</b>\n\n")
-		for _, ev := range started {
+		for i, ev := range started {
+			if i > 0 {
+				sb.WriteString("➖➖➖➖➖➖➖\n")
+			}
 			timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
-			sb.WriteString(fmt.Sprintf("🛡 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s\n%s\n\n",
+			sb.WriteString(fmt.Sprintf("🎮 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s\n%s\n\n",
 				html.EscapeString(ev.match.TeamA), html.EscapeString(ev.match.TeamB), timeStr, streamLine(ev.match, maxStreams)))
 		}
 	}

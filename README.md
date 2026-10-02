@@ -93,7 +93,7 @@ go run ./cmd/bot
 | `digest_preset_hours` | Пресеты часа дайджеста для кнопок |
 | `default_teams` | Команды, показываемые в подписках по умолчанию |
 | `admin_ids` | Telegram ID администраторов (узнать: [@userinfobot](https://t.me/userinfobot)) |
-| `max_streams_per_match` | Макс. стримов на матч в уведомлениях/расписании (`0` = все, дефолт `0`, cap 10) |
+| `max_streams_per_match` | Макс. неофициальных стримов в `📺 Смотреть` (`0` = все, дефолт `0`, cap 10; официальные в `⭐` всегда все) |
 
 Секреты (`config.json`, `.env`) в git не коммитятся, см. `.gitignore`.
 Пример деплойных переменных — в `.env.example`.

@@ -21,7 +21,7 @@ func (b *Bot) handleVersion(c telebot.Context) error {
 	if c.Sender() == nil || !b.isAdmin(c.Sender().ID) {
 		return nil
 	}
-	return c.Send(versionText())
+	return c.Send(versionText(), telebot.NoPreview)
 }
 
 // handleAdmin показывает админ-панель. Неадминам молча ничего
@@ -30,7 +30,7 @@ func (b *Bot) handleAdmin(c telebot.Context) error {
 	if c.Sender() == nil || !b.isAdmin(c.Sender().ID) {
 		return nil
 	}
-	return c.Send("🛠 <b>Админ-панель</b>", telebot.ModeHTML, b.buildAdminKeyboard())
+	return c.Send("🛠 <b>Админ-панель</b>", telebot.ModeHTML, b.buildAdminKeyboard(), telebot.NoPreview)
 }
 
 func (b *Bot) buildAdminKeyboard() *telebot.ReplyMarkup {
