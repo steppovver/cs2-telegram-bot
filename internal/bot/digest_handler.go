@@ -53,6 +53,7 @@ func (b *Bot) handleDigestCallback(c telebot.Context) error {
 			return c.Respond(&telebot.CallbackResponse{Text: "Не удалось сохранить."})
 		}
 		settings.Enabled = !settings.Enabled
+		slog.Info("Дайджест переключен", slog.Int64("user_id", userID), slog.Bool("enabled", settings.Enabled))
 		toast := "Ежедневный дайджест включен!"
 		if !settings.Enabled {
 			toast = "Ежедневный дайджест выключен."

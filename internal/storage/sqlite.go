@@ -41,9 +41,11 @@ CREATE TABLE IF NOT EXISTS matches (
 	team_a_id INTEGER,
 	team_b_id INTEGER,
 	begin_at INTEGER,
+	end_at INTEGER DEFAULT 0,
 	notified INTEGER DEFAULT 0,
 	status TEXT,
-	streams_json TEXT NOT NULL DEFAULT '[]'
+	streams_json TEXT NOT NULL DEFAULT '[]',
+	score_json TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_teams_name ON teams(name);
 CREATE INDEX IF NOT EXISTS idx_players_team_id ON players(team_id);
@@ -106,6 +108,8 @@ func InitSchema(db *sql.DB) error {
 		`ALTER TABLE matches ADD COLUMN team_b_id INTEGER;`,
 		`ALTER TABLE matches ADD COLUMN status TEXT;`,
 		`ALTER TABLE matches ADD COLUMN streams_json TEXT DEFAULT '[]';`,
+		`ALTER TABLE matches ADD COLUMN score_json TEXT DEFAULT '[]';`,
+		`ALTER TABLE matches ADD COLUMN end_at INTEGER DEFAULT 0;`,
 	}
 	for _, q := range alters {
 		_, err := db.Exec(q)
@@ -365,6 +369,52 @@ func decodeStreams(raw sql.NullString) []domain.MatchStream {
 	return kept
 }
 
+// scorePayload — формат колонки score_json: счет серии и карты одним JSON.
+type scorePayload struct {
+	Results  []domain.MatchResult `json:"results"`
+	Games    []domain.MatchGame   `json:"games"`
+	NumGames int                  `json:"num_games"`
+}
+
+// encodeScore сериализует счет серии и карты для колонки score_json.
+func encodeScore(m domain.Match) string {
+	if len(m.Results) == 0 && len(m.Games) == 0 && m.NumberOfGames == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(scorePayload{Results: m.Results, Games: m.Games, NumGames: m.NumberOfGames})
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// decodeScore разбирает score_json обратно в матч.
+// Пустые/битые значения оставляют Results/Games/NumberOfGames пустыми.
+func decodeScore(raw sql.NullString, m *domain.Match) {
+	s := ""
+	if raw.Valid {
+		s = strings.TrimSpace(raw.String)
+	}
+	if s == "" || s == "[]" {
+		return
+	}
+	var p scorePayload
+	if err := json.Unmarshal([]byte(s), &p); err != nil {
+		return
+	}
+	m.Results = p.Results
+	m.Games = p.Games
+	m.NumberOfGames = p.NumGames
+}
+
+// endAtUnix переводит EndAt в unix для БД: 0 = неизвестно.
+func endAtUnix(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
+}
+
 func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, teamsChanged bool, statusChanged bool, oldTime time.Time, oldTeamA string, oldTeamB string, oldStatus string, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -387,8 +437,8 @@ func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, te
 			slog.Int64("begin_at", m.Time.Unix()),
 		)
 		_, err = tx.Exec(
-			`INSERT INTO matches (id, team_a, team_b, team_a_id, team_b_id, begin_at, status, streams_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			m.ID, m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Time.Unix(), m.Status, encodeStreams(m.Streams),
+			`INSERT INTO matches (id, team_a, team_b, team_a_id, team_b_id, begin_at, end_at, status, streams_json, score_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			m.ID, m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Time.Unix(), endAtUnix(m.EndAt), m.Status, encodeStreams(m.Streams), encodeScore(m),
 		)
 		if err != nil {
 			return false, false, false, false, time.Time{}, "", "", "", err
@@ -421,8 +471,8 @@ func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, te
 	}
 
 	_, err = tx.Exec(
-		`UPDATE matches SET begin_at = ?, team_a = ?, team_b = ?, team_a_id = ?, team_b_id = ?, status = ?, notified = ?, streams_json = ? WHERE id = ?`,
-		m.Time.Unix(), m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Status, newNotified, encodeStreams(m.Streams), m.ID,
+		`UPDATE matches SET begin_at = ?, end_at = ?, team_a = ?, team_b = ?, team_a_id = ?, team_b_id = ?, status = ?, notified = ?, streams_json = ?, score_json = ? WHERE id = ?`,
+		m.Time.Unix(), endAtUnix(m.EndAt), m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Status, newNotified, encodeStreams(m.Streams), encodeScore(m), m.ID,
 	)
 	if err != nil {
 		return false, false, false, false, time.Time{}, "", "", "", err
@@ -442,7 +492,7 @@ func sameTeamPair(a1, b1, a2, b2 string) bool {
 
 func (s *Storage) GetUpcomingUserMatches(userID int64) ([]domain.Match, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, '')
+		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.score_json, '[]')
 		FROM matches m
 		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
 		WHERE s.user_id = ? AND m.begin_at > ?
@@ -459,13 +509,15 @@ func (s *Storage) GetUpcomingUserMatches(userID int64) ([]domain.Match, error) {
 		var unixTime int64
 		var teamAID, teamBID sql.NullInt64
 		var status string
-		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status); err != nil {
+		var scoreRaw sql.NullString
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status, &scoreRaw); err != nil {
 			continue
 		}
 		m.Time = time.Unix(unixTime, 0)
 		m.TeamAID = int(teamAID.Int64)
 		m.TeamBID = int(teamBID.Int64)
 		m.Status = status
+		decodeScore(scoreRaw, &m)
 		matches = append(matches, m)
 	}
 	return matches, rows.Err()
@@ -473,7 +525,7 @@ func (s *Storage) GetUpcomingUserMatches(userID int64) ([]domain.Match, error) {
 
 func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.streams_json, '[]')
+		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.streams_json, '[]'), COALESCE(m.score_json, '[]')
 		FROM matches m
 		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
 		WHERE s.user_id = ? AND m.begin_at <= ? AND m.status = 'running'
@@ -490,8 +542,8 @@ func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
 		var unixTime int64
 		var teamAID, teamBID sql.NullInt64
 		var status string
-		var streamsRaw sql.NullString
-		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status, &streamsRaw); err != nil {
+		var streamsRaw, scoreRaw sql.NullString
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status, &streamsRaw, &scoreRaw); err != nil {
 			continue
 		}
 		m.Time = time.Unix(unixTime, 0)
@@ -499,15 +551,60 @@ func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
 		m.TeamBID = int(teamBID.Int64)
 		m.Status = status
 		m.Streams = decodeStreams(streamsRaw)
+		decodeScore(scoreRaw, &m)
+		matches = append(matches, m)
+	}
+	return matches, rows.Err()
+}
+
+// GetScoreMatches возвращает матчи со счетом для кнопки 📊: идущие сейчас
+// и завершенные (finished + локальный post_match). Только из БД, без API.
+// not_started сюда не попадают — счета у них нет.
+func (s *Storage) GetScoreMatches(userID int64) ([]domain.Match, error) {
+	rows, err := s.db.Query(`
+		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, COALESCE(m.end_at, 0), m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.streams_json, '[]'), COALESCE(m.score_json, '[]')
+		FROM matches m
+		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
+		WHERE s.user_id = ? AND m.status IN ('running', 'finished', 'post_match')
+		ORDER BY m.begin_at ASC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var matches []domain.Match
+	for rows.Next() {
+		var m domain.Match
+		var unixTime, endUnix int64
+		var teamAID, teamBID sql.NullInt64
+		var status string
+		var streamsRaw, scoreRaw sql.NullString
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &endUnix, &teamAID, &teamBID, &status, &streamsRaw, &scoreRaw); err != nil {
+			continue
+		}
+		m.Time = time.Unix(unixTime, 0)
+		if endUnix > 0 {
+			m.EndAt = time.Unix(endUnix, 0)
+		}
+		m.TeamAID = int(teamAID.Int64)
+		m.TeamBID = int(teamBID.Int64)
+		m.Status = status
+		m.Streams = decodeStreams(streamsRaw)
+		decodeScore(scoreRaw, &m)
 		matches = append(matches, m)
 	}
 	return matches, rows.Err()
 }
 
 func (s *Storage) CleanOldMatches() {
-	_, err := s.db.Exec(`DELETE FROM matches WHERE begin_at < ?`, time.Now().Add(-24*time.Hour).Unix())
+	res, err := s.db.Exec(`DELETE FROM matches WHERE begin_at < ?`, time.Now().Add(-24*time.Hour).Unix())
 	if err != nil {
 		slog.Error("Ошибка при очистке старых матчей", slog.Any("error", err))
+		return
+	}
+	if n, err := res.RowsAffected(); err == nil && n > 0 {
+		slog.Info("Очистка старых матчей", slog.Int64("deleted", n))
 	}
 }
 

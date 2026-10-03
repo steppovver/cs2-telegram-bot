@@ -16,6 +16,7 @@ type Storage interface {
 	GetSubscribedTeamIDs() ([]string, error)
 	GetUpcomingUserMatches(userID int64) ([]domain.Match, error)
 	GetLiveUserMatches(userID int64) ([]domain.Match, error)
+	GetScoreMatches(userID int64) ([]domain.Match, error)
 	GetMatchesForReminder() ([]domain.Match, error)
 	GetUsersByTeamIDs(teamAID, teamBID int) ([]int64, error)
 	ProcessMatch(m domain.Match) (isNew, timeChanged, teamsChanged, statusChanged bool, oldTime time.Time, oldTeamA, oldTeamB, oldStatus string, err error)
@@ -41,6 +42,10 @@ type Storage interface {
 
 type PandaClient interface {
 	FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string) ([]domain.Match, error)
+	FetchFinishedMatchesByTeamIDs(ctx context.Context, teamIDs []string, since time.Time) ([]domain.Match, error)
+	// APIUsage: запросов за текущий UTC-час, минимальный остаток лимита
+	// (-1 если ответов еще не было) и сам лимит в час.
+	APIUsage() (used, remaining, limit int)
 }
 
 type BroadcastTask struct {
@@ -66,8 +71,8 @@ type Bot struct {
 
 	mainMenu     *telebot.ReplyMarkup
 	btnSchedule  telebot.Btn
+	btnScore     telebot.Btn
 	btnSubscribe telebot.Btn
-	btnSearch    telebot.Btn
 	btnDigest    telebot.Btn
 
 	awaitingHour   map[int64]bool
@@ -79,6 +84,11 @@ type Bot struct {
 	digestHours []int
 
 	maxStreams int
+
+	// apiWarnAt — время последнего варнинга об израсходовании лимита API.
+	// Throttle: чаще раза в час не предупреждаем.
+	apiWarnMu sync.Mutex
+	apiWarnAt time.Time
 
 	admins map[int64]bool
 }
@@ -102,15 +112,15 @@ func New(b *telebot.Bot, s Storage, p PandaClient, defaultTeams []domain.TeamInf
 		broadcastCh:  make(chan BroadcastTask, 10000),
 		mainMenu:     menu,
 		btnSchedule:  menu.Text("📅 Узнать расписание"),
+		btnScore:     menu.Text("📊 Счет матчей"),
 		btnSubscribe: menu.Text("🔔 Подписки на команды"),
-		btnSearch:    menu.Text("🔍 Поиск команды"),
 		btnDigest:    menu.Text("⏰ Дайджест"),
 	}
 
 	botApp.mainMenu.Reply(
 		botApp.mainMenu.Row(botApp.btnSchedule),
+		botApp.mainMenu.Row(botApp.btnScore),
 		botApp.mainMenu.Row(botApp.btnSubscribe),
-		botApp.mainMenu.Row(botApp.btnSearch),
 		botApp.mainMenu.Row(botApp.btnDigest),
 	)
 
@@ -124,8 +134,8 @@ func (b *Bot) RegisterHandlers() {
 	b.telebot.Handle("/version", b.handleVersion)
 	b.telebot.Handle("/admin", b.handleAdmin)
 	b.telebot.Handle(&b.btnSchedule, b.handleSchedule)
+	b.telebot.Handle(&b.btnScore, b.handleScore)
 	b.telebot.Handle(&b.btnSubscribe, b.handleSubscribe)
-	b.telebot.Handle(&b.btnSearch, b.handleSearchPrompt)
 	b.telebot.Handle(&b.btnDigest, b.handleDigestMenu)
 	b.telebot.Handle(telebot.OnText, b.handleTextSearch)
 	b.telebot.Handle("\fsub_", b.handleToggleSub)
