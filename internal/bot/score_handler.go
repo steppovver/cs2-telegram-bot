@@ -94,6 +94,9 @@ func buildScoreBlock(m domain.Match, subs []domain.TeamInfo, utcOffset int, show
 	if line := durationLine(m); line != "" {
 		sb.WriteString(line + "\n")
 	}
+	if line := hltvLine(m); line != "" {
+		sb.WriteString(line + "\n")
+	}
 	return sb.String()
 }
 

@@ -119,6 +119,13 @@ func main() {
 		botApp.StartDailyDigest(ctx)
 	}()
 
+	// Запускаем воркер ссылок HLTV (планировщик + скрапер)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		botApp.StartHltvResolver(ctx)
+	}()
+
 	// Telegram-бот запускается в отдельной горутине, т.к. Start() блокирует поток
 	wg.Add(1)
 	go func() {

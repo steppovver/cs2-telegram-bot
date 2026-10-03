@@ -55,8 +55,13 @@ func (b *Bot) runFinishedCycle(ctx context.Context) {
 	}
 
 	for _, match := range matches {
-		if _, _, _, _, _, _, _, _, err := b.storage.ProcessMatch(match); err != nil {
+		isNew, _, _, _, _, _, _, _, err := b.storage.ProcessMatch(match)
+		if err != nil {
 			slog.Error("Ошибка сохранения завершенного матча", slog.Int("match_id", match.ID), slog.Any("error", err))
+			continue
+		}
+		if isNew {
+			b.ensureAndEnqueueHltv(match)
 		}
 	}
 	slog.Info("Цикл завершенных матчей", slog.Int("matches", len(matches)))

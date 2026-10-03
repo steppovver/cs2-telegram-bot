@@ -67,6 +67,15 @@ CREATE TABLE IF NOT EXISTS meta (
 	key TEXT PRIMARY KEY,
 	value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS hltv_links (
+	match_id INTEGER PRIMARY KEY,
+	hltv_url TEXT NOT NULL DEFAULT '',
+	attempts INTEGER NOT NULL DEFAULT 0,
+	next_try INTEGER NOT NULL DEFAULT 0,
+	updated_at INTEGER NOT NULL DEFAULT 0,
+	FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_hltv_next_try ON hltv_links(next_try);
 `
 
 type Storage struct {
@@ -554,6 +563,7 @@ func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
 		decodeScore(scoreRaw, &m)
 		matches = append(matches, m)
 	}
+	s.attachHltvURLs(matches)
 	return matches, rows.Err()
 }
 
@@ -594,6 +604,7 @@ func (s *Storage) GetScoreMatches(userID int64) ([]domain.Match, error) {
 		decodeScore(scoreRaw, &m)
 		matches = append(matches, m)
 	}
+	s.attachHltvURLs(matches)
 	return matches, rows.Err()
 }
 
@@ -789,6 +800,7 @@ func (s *Storage) GetMatchesForReminder() ([]domain.Match, error) {
 		m.Streams = decodeStreams(streamsRaw)
 		matches = append(matches, m)
 	}
+	s.attachHltvURLs(matches)
 	return matches, rows.Err()
 }
 
@@ -1072,4 +1084,170 @@ func (s *Storage) GetDigestMatches(userID int64, fromUnix, toUnix int64) ([]doma
 
 func (s *Storage) Close() error {
 	return s.db.Close()
+}
+
+// EnsureHltvLinkRow заводит строку-маркер для резолва ссылки HLTV.
+// next_try=0 = к обработке прямо сейчас. Идемпотентно.
+func (s *Storage) EnsureHltvLinkRow(matchID int) error {
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO hltv_links (match_id, next_try) VALUES (?, 0)`, matchID)
+	return err
+}
+
+// GetHltvDueIDs возвращает ID матчей без ссылки HLTV в окне begin_at,
+// у которых next_try пуст или уже прошел. Сразу в порядке приоритета:
+// ближайшие по времени начала к now — сверху.
+func (s *Storage) GetHltvDueIDs(nowUnix, fromUnix, toUnix int64, limit int) ([]int, error) {
+	rows, err := s.db.Query(`
+		SELECT m.id FROM matches m
+		LEFT JOIN hltv_links h ON h.match_id = m.id
+		WHERE m.begin_at BETWEEN ? AND ?
+			AND (h.hltv_url IS NULL OR h.hltv_url = '')
+			AND COALESCE(h.next_try, 0) <= ?
+		ORDER BY ABS(m.begin_at - ?) ASC
+		LIMIT ?
+	`, fromUnix, toUnix, nowUnix, nowUnix, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// HltvAttempts возвращает число уже сделанных попыток скрапинга.
+// Нет строки — 0 без ошибки.
+func (s *Storage) HltvAttempts(matchID int) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT attempts FROM hltv_links WHERE match_id = ?`, matchID).Scan(&n)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return n, err
+}
+
+// ClaimHltvAttempt фиксирует взятие матча в работу: attempts+1 и время
+// следующей попытки. Вызывается ДО скрапинга, поэтому упавшая попытка
+// тоже откладывается, а не крутится по кругу.
+func (s *Storage) ClaimHltvAttempt(matchID int, nextTryUnix int64) (int, error) {
+	now := time.Now().Unix()
+	_, err := s.db.Exec(`INSERT INTO hltv_links (match_id, attempts, next_try, updated_at) VALUES (?, 1, ?, ?)
+		ON CONFLICT(match_id) DO UPDATE SET attempts = hltv_links.attempts + 1, next_try = excluded.next_try, updated_at = excluded.updated_at`,
+		matchID, nextTryUnix, now)
+	if err != nil {
+		return 0, err
+	}
+	return s.HltvAttempts(matchID)
+}
+
+// SetHltvURL сохраняет найденную ссылку. Матч с непустой ссылкой
+// из выборки due выпадает навсегда.
+func (s *Storage) SetHltvURL(matchID int, url string) error {
+	now := time.Now().Unix()
+	_, err := s.db.Exec(`INSERT INTO hltv_links (match_id, hltv_url, updated_at) VALUES (?, ?, ?)
+		ON CONFLICT(match_id) DO UPDATE SET hltv_url = excluded.hltv_url, updated_at = excluded.updated_at`,
+		matchID, url, now)
+	return err
+}
+
+// HltvURLByIDs батчем отдает найденные ссылки для подстановки в карточки.
+func (s *Storage) HltvURLByIDs(ids []int) (map[int]string, error) {
+	out := make(map[int]string)
+	uniq := make([]int, 0, len(ids))
+	seen := make(map[int]bool, len(ids))
+	for _, id := range ids {
+		if id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		uniq = append(uniq, id)
+	}
+	if len(uniq) == 0 {
+		return out, nil
+	}
+	const chunkSize = 500
+	for start := 0; start < len(uniq); start += chunkSize {
+		end := start + chunkSize
+		if end > len(uniq) {
+			end = len(uniq)
+		}
+		chunk := uniq[start:end]
+		args := make([]any, len(chunk))
+		placeholders := make([]string, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+			placeholders[i] = "?"
+		}
+		rows, err := s.db.Query(fmt.Sprintf(
+			`SELECT match_id, hltv_url FROM hltv_links WHERE match_id IN (%s) AND hltv_url != ''`,
+			strings.Join(placeholders, ",")),
+			args...)
+		if err != nil {
+			return out, err
+		}
+		for rows.Next() {
+			var id int
+			var url string
+			if err := rows.Scan(&id, &url); err != nil {
+				continue
+			}
+			if url != "" {
+				out[id] = url
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return out, err
+		}
+	}
+	return out, nil
+}
+
+// GetMatchByID возвращает матч для HLTV-воркера: команды, время, статус.
+func (s *Storage) GetMatchByID(matchID int) (domain.Match, error) {
+	var m domain.Match
+	var unixTime int64
+	var teamAID, teamBID sql.NullInt64
+	var status string
+	err := s.db.QueryRow(`SELECT id, team_a, team_b, begin_at, team_a_id, team_b_id, COALESCE(status, '')
+		FROM matches WHERE id = ?`, matchID).
+		Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status)
+	if err != nil {
+		return m, err
+	}
+	m.Time = time.Unix(unixTime, 0)
+	m.TeamAID = int(teamAID.Int64)
+	m.TeamBID = int(teamBID.Int64)
+	m.Status = status
+	return m, nil
+}
+
+// attachHltvURLs добирает ссылки HLTV одним батч-запросом.
+// Пустая карта — матчи остаются без ссылки, рендер ее просто не покажет.
+func (s *Storage) attachHltvURLs(matches []domain.Match) {
+	if len(matches) == 0 {
+		return
+	}
+	ids := make([]int, 0, len(matches))
+	for _, m := range matches {
+		if m.ID != 0 {
+			ids = append(ids, m.ID)
+		}
+	}
+	urls, err := s.HltvURLByIDs(ids)
+	if err != nil || len(urls) == 0 {
+		return
+	}
+	for i := range matches {
+		if u, ok := urls[matches[i].ID]; ok {
+			matches[i].HltvURL = u
+		}
+	}
 }

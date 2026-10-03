@@ -16,6 +16,9 @@ type Match struct {
 	Streams       []MatchStream
 	Results       []MatchResult
 	Games         []MatchGame
+	// HltvURL — точная ссылка на профиль матча на HLTV
+	// (https://www.hltv.org/matches/<id>/...). Пусто = еще не резолвили.
+	HltvURL string
 }
 
 // MatchResult — счет серии: очки команды с team_id.

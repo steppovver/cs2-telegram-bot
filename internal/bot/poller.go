@@ -86,6 +86,9 @@ func (b *Bot) runPollerCycle(ctx context.Context) {
 			slog.Error("Ошибка сохранения матча", slog.Int("match_id", match.ID), slog.Any("error", err))
 			continue
 		}
+		if isNew {
+			b.ensureAndEnqueueHltv(match)
+		}
 
 		if (!isNew && !timeChanged && !teamsChanged && !statusChanged) || match.TeamA == "TBD" || match.TeamB == "TBD" {
 			continue
@@ -141,6 +144,21 @@ func (b *Bot) runPollerCycle(ctx context.Context) {
 // broadcastMatchEvents раскладывает события цикла по пользователям и шлет
 // каждому одно объединенное сообщение (время — в его поясе).
 func (b *Bot) broadcastMatchEvents(ctx context.Context, events []matchEvent) {
+	// Добираем ссылки HLTV одним батч-запросом: события построены
+	// из API-объектов, в них ссылки нет.
+	matchIDs := make([]int, 0, len(events))
+	for _, ev := range events {
+		matchIDs = append(matchIDs, ev.match.ID)
+	}
+	if urls, err := b.storage.HltvURLByIDs(matchIDs); err == nil {
+		for i := range events {
+			if u := urls[events[i].match.ID]; u != "" {
+				events[i].match.HltvURL = u
+			}
+		}
+	} else {
+		slog.Error("Ошибка получения ссылок HLTV", slog.Any("error", err))
+	}
 	userEvents := make(map[int64][]matchEvent)
 	for _, ev := range events {
 		users, err := b.storage.GetUsersByTeamIDs(ev.match.TeamAID, ev.match.TeamBID)
@@ -221,9 +239,7 @@ func buildCombinedUpdateMessage(evts []matchEvent, off int, maxStreams int) stri
 			if i > 0 {
 				sb.WriteString("➖➖➖➖➖➖➖\n")
 			}
-			timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
-			sb.WriteString(fmt.Sprintf("🎮 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s\n%s\n\n",
-				html.EscapeString(ev.match.TeamA), html.EscapeString(ev.match.TeamB), timeStr, streamLine(ev.match, maxStreams)))
+			sb.WriteString(formatMatchCard(ev.match, off, maxStreams) + "\n\n")
 		}
 	}
 	if len(news) > 0 {

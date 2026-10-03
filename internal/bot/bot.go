@@ -38,6 +38,13 @@ type Storage interface {
 	GetDigestDueUsers(hourUTC int, slot string) ([]domain.DigestDueUser, error)
 	MarkDigestSent(userID int64, date string) error
 	GetDigestMatches(userID int64, fromUnix, toUnix int64) ([]domain.Match, error)
+	EnsureHltvLinkRow(matchID int) error
+	GetHltvDueIDs(nowUnix, fromUnix, toUnix int64, limit int) ([]int, error)
+	HltvAttempts(matchID int) (int, error)
+	ClaimHltvAttempt(matchID int, nextTryUnix int64) (int, error)
+	SetHltvURL(matchID int, url string) error
+	HltvURLByIDs(ids []int) (map[int]string, error)
+	GetMatchByID(matchID int) (domain.Match, error)
 }
 
 type PandaClient interface {
@@ -90,6 +97,12 @@ type Bot struct {
 	apiWarnMu sync.Mutex
 	apiWarnAt time.Time
 
+	// hltvQ — очередь ID матчей на резолв ссылки HLTV, hltvInflight —
+	// множество "в очереди или в работе" против дублей между тиками.
+	hltvQ        chan int
+	hltvMu       sync.Mutex
+	hltvInflight map[int]bool
+
 	admins map[int64]bool
 }
 
@@ -110,6 +123,8 @@ func New(b *telebot.Bot, s Storage, p PandaClient, defaultTeams []domain.TeamInf
 		awaitingHour: make(map[int64]bool),
 		awaitingTZ:   make(map[int64]bool),
 		broadcastCh:  make(chan BroadcastTask, 10000),
+		hltvQ:        make(chan int, hltvQueueSize),
+		hltvInflight: make(map[int]bool),
 		mainMenu:     menu,
 		btnSchedule:  menu.Text("📅 Узнать расписание"),
 		btnScore:     menu.Text("📊 Счет матчей"),

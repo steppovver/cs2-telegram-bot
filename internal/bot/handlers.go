@@ -134,19 +134,10 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 	if len(liveMatches) > 0 {
 		sb.WriteString("🔴 <b>Сейчас играют:</b>\n\n")
 		for i, match := range liveMatches {
-			teamA, teamB := html.EscapeString(match.TeamA), html.EscapeString(match.TeamB)
-			for _, sub := range subs {
-				if sub.ID == match.TeamAID {
-					teamA = "<b>" + teamA + "</b>"
-				}
-				if sub.ID == match.TeamBID {
-					teamB = "<b>" + teamB + "</b>"
-				}
-			}
 			if i > 0 {
 				sb.WriteString("➖➖➖➖➖➖➖\n")
 			}
-			sb.WriteString(fmt.Sprintf("🎮 %s vs %s%s\n%s\n", teamA, teamB, boSuffix(match), streamLine(match, b.maxStreams)))
+			sb.WriteString(formatMatchCard(match, utcOffset, b.maxStreams) + "\n")
 		}
 		sb.WriteString("\n")
 	}
