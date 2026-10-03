@@ -159,9 +159,12 @@ func (c *Client) queryMatches(ctx context.Context, q matchesQuery) ([]domain.Mat
 }
 
 // queryChunk листает страницы одного чанка, складывая матчи в merged.
+// Навигация — по ссылке rel="next" из Link-заголовка; короткая страница
+// и выход за окно Since — страховки на случай отсутствия линка.
 func (c *Client) queryChunk(ctx context.Context, q matchesQuery, merged map[int]domain.Match) error {
-	for page := 1; ; page++ {
-		pandaMatches, err := c.getMatchPage(ctx, q, page)
+	nextURL := q.url(1)
+	for page := 1; nextURL != ""; page++ {
+		pandaMatches, next, err := c.getMatchPage(ctx, nextURL, page)
 		if err != nil {
 			return err
 		}
@@ -178,10 +181,10 @@ func (c *Client) queryChunk(ctx context.Context, q matchesQuery, merged map[int]
 				merged[m.ID] = m
 			}
 		}
-		// Короткая страница — дальше данных нет.
-		if len(pandaMatches) < matchesPerPage {
+		if next == "" || len(pandaMatches) < matchesPerPage {
 			return nil
 		}
+		nextURL = next
 
 		select {
 		case <-ctx.Done():
@@ -189,14 +192,16 @@ func (c *Client) queryChunk(ctx context.Context, q matchesQuery, merged map[int]
 		default:
 		}
 	}
+	return nil
 }
 
-// getMatchPage выполняет GET страницы фильтра с ретраями и декодирует матчи.
-// URL страницы генерируется из фильтра здесь же.
-func (c *Client) getMatchPage(ctx context.Context, q matchesQuery, page int) ([]pandaMatch, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, q.url(page), nil)
+// getMatchPage выполняет GET готового URL страницы с ретраями, декодирует
+// матчи и возвращает ссылку rel="next" из Link-заголовка ("" если дальше
+// некуда). page нужен только для текстов ошибок.
+func (c *Client) getMatchPage(ctx context.Context, pageURL string, page int) ([]pandaMatch, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Accept", "application/json")
@@ -222,31 +227,52 @@ func (c *Client) getMatchPage(ctx context.Context, q matchesQuery, page int) ([]
 			}
 			if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
 				resp.Body.Close()
-				return nil, fmt.Errorf("API client error: %d", resp.StatusCode)
+				return nil, "", fmt.Errorf("API client error: %d", resp.StatusCode)
 			}
 			resp.Body.Close()
 		}
 
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, "", ctx.Err()
 		case <-time.After(time.Duration(attempt) * time.Second):
 		}
 	}
 
 	if doErr != nil {
-		return nil, fmt.Errorf("ошибка сети при запросе страницы %d: %w", page, doErr)
+		return nil, "", fmt.Errorf("ошибка сети при запросе страницы %d: %w", page, doErr)
 	}
 	if !requestSuccess {
-		return nil, fmt.Errorf("превышено количество попыток запроса для страницы %d", page)
+		return nil, "", fmt.Errorf("превышено количество попыток запроса для страницы %d", page)
 	}
+
+	next := parseNextLink(resp.Header.Get("Link"))
 
 	var pandaMatches []pandaMatch
 	err = json.NewDecoder(resp.Body).Decode(&pandaMatches)
 	resp.Body.Close()
 
 	if err != nil {
-		return nil, fmt.Errorf("ошибка парсинга страницы %d: %w", page, err)
+		return nil, "", fmt.Errorf("ошибка парсинга страницы %d: %w", page, err)
 	}
-	return pandaMatches, nil
+	return pandaMatches, next, nil
+}
+
+// parseNextLink достает URL rel="next" из Link-заголовка вида
+// `<url1>; rel="last", <url2>; rel="next"`. Нет линка — пустая строка.
+func parseNextLink(header string) string {
+	for _, part := range strings.Split(header, ",") {
+		segments := strings.SplitN(strings.TrimSpace(part), ";", 2)
+		if len(segments) != 2 {
+			continue
+		}
+		if strings.TrimSpace(segments[1]) != `rel="next"` {
+			continue
+		}
+		u := strings.TrimSpace(segments[0])
+		u = strings.TrimPrefix(u, "<")
+		u = strings.TrimSuffix(u, ">")
+		return strings.TrimSpace(u)
+	}
+	return ""
 }
