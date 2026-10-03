@@ -667,7 +667,7 @@ func (s *Storage) GetMatchesForReminder() ([]domain.Match, error) {
 	now := time.Now().Unix()
 	fiveMinsLater := now + (5 * 60)
 
-	query := `SELECT id, team_a, team_b, begin_at, team_a_id, team_b_id
+	query := `SELECT id, team_a, team_b, begin_at, team_a_id, team_b_id, COALESCE(streams_json, '[]')
 	          FROM matches
 	          WHERE begin_at > ? AND begin_at <= ? AND notified = 0`
 
@@ -682,12 +682,14 @@ func (s *Storage) GetMatchesForReminder() ([]domain.Match, error) {
 		var m domain.Match
 		var unixTime int64
 		var teamAID, teamBID sql.NullInt64
-		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID); err != nil {
+		var streamsRaw sql.NullString
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &streamsRaw); err != nil {
 			continue
 		}
 		m.Time = time.Unix(unixTime, 0)
 		m.TeamAID = int(teamAID.Int64)
 		m.TeamBID = int(teamBID.Int64)
+		m.Streams = decodeStreams(streamsRaw)
 		matches = append(matches, m)
 	}
 	return matches, rows.Err()
