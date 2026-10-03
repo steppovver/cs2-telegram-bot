@@ -9,13 +9,18 @@ import (
 	"strings"
 	"time"
 
+	"cs2bot/internal/config"
 	"cs2bot/internal/domain"
 )
 
-func (b *Bot) StartPoller(ctx context.Context) {
+func (b *Bot) StartPoller(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Duration(config.DefaultPollIntervalSec) * time.Second
+	}
+	slog.Info("Воркер опроса матчей запущен", slog.Duration("interval", interval))
 	b.runPollerCycle(ctx)
 
-	ticker := time.NewTicker(1 * time.Minute)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
@@ -114,6 +119,23 @@ func (b *Bot) runPollerCycle(ctx context.Context) {
 
 	b.storage.CleanStaleRunningMatches(apiMatchIDs)
 	b.storage.CleanOldMatches()
+
+	if len(events) > 0 || len(matches) > 0 {
+		var started, news int
+		for _, ev := range events {
+			switch ev.kind {
+			case eventStarted:
+				started++
+			case eventNew:
+				news++
+			}
+		}
+		slog.Info("Цикл обновления матчей",
+			slog.Int("api_matches", len(matches)),
+			slog.Int("events", len(events)),
+			slog.Int("started", started),
+			slog.Int("new", news))
+	}
 }
 
 // broadcastMatchEvents раскладывает события цикла по пользователям и шлет

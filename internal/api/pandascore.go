@@ -26,11 +26,24 @@ func NewClient(apiKey string) *Client {
 }
 
 type pandaMatch struct {
-	ID                int       `json:"id"`
-	BeginAt           time.Time `json:"begin_at"`
-	Status            string    `json:"status"`
-	OfficialStreamURL string    `json:"official_stream_url"`
-	StreamsList       []struct {
+	ID                int        `json:"id"`
+	BeginAt           time.Time  `json:"begin_at"`
+	EndAt             *time.Time `json:"end_at"`
+	Status            string     `json:"status"`
+	OfficialStreamURL string     `json:"official_stream_url"`
+	Results           []struct {
+		Score  int `json:"score"`
+		TeamID int `json:"team_id"`
+	} `json:"results"`
+	Games []struct {
+		Position int    `json:"position"`
+		Status   string `json:"status"`
+		Finished bool   `json:"finished"`
+		Winner   struct {
+			ID *int `json:"id"`
+		} `json:"winner"`
+	} `json:"games"`
+	StreamsList []struct {
 		EmbedURL string `json:"embed_url"`
 		Language string `json:"language"`
 		Main     bool   `json:"main"`
@@ -140,43 +153,13 @@ func (c *Client) fetchMatchesChunk(ctx context.Context, teamIDs []string) ([]dom
 			break
 		}
 
-		// Маппинг данных из API в доменную модель (без изменений)
+		// Маппинг данных из API в доменную модель.
 		for _, pm := range pandaMatches {
-			if pm.Status == "canceled" {
+			m, ok := mapPandaMatch(pm)
+			if !ok {
 				continue
 			}
-			// begin_at=null в API -> zero time: такой матч нельзя показать
-			// и напомнить о нем, пропускаем до появления времени.
-			if pm.BeginAt.IsZero() {
-				continue
-			}
-
-			teamA, teamB := "TBD", "TBD"
-			teamAID, teamBID := 0, 0
-
-			if len(pm.Opponents) > 0 {
-				teamA = pm.Opponents[0].Opponent.Name
-				teamAID = pm.Opponents[0].Opponent.ID
-			}
-			if len(pm.Opponents) > 1 {
-				teamB = pm.Opponents[1].Opponent.Name
-				teamBID = pm.Opponents[1].Opponent.ID
-			}
-
-			if teamAID == 0 && teamBID == 0 {
-				continue
-			}
-
-			allMatches = append(allMatches, domain.Match{
-				ID:      pm.ID,
-				TeamA:   teamA,
-				TeamB:   teamB,
-				TeamAID: teamAID,
-				TeamBID: teamBID,
-				Time:    pm.BeginAt,
-				Status:  pm.Status,
-				Streams: mapPandaStreams(pm),
-			})
+			allMatches = append(allMatches, m)
 		}
 
 		// Если API вернуло меньше элементов, чем размер страницы,
@@ -189,6 +172,201 @@ func (c *Client) fetchMatchesChunk(ctx context.Context, teamIDs []string) ([]dom
 	}
 
 	return allMatches, nil
+}
+
+// mapPandaMatch переводит ответ API в доменную модель.
+// Возвращает ok=false для матчей, которые нельзя показать (canceled,
+// begin_at=null, нет команд).
+func mapPandaMatch(pm pandaMatch) (domain.Match, bool) {
+	var zero domain.Match
+	if pm.Status == "canceled" {
+		return zero, false
+	}
+	// begin_at=null в API -> zero time: такой матч нельзя показать
+	// и напомнить о нем, пропускаем до появления времени.
+	if pm.BeginAt.IsZero() {
+		return zero, false
+	}
+
+	teamA, teamB := "TBD", "TBD"
+	teamAID, teamBID := 0, 0
+
+	if len(pm.Opponents) > 0 {
+		teamA = pm.Opponents[0].Opponent.Name
+		teamAID = pm.Opponents[0].Opponent.ID
+	}
+	if len(pm.Opponents) > 1 {
+		teamB = pm.Opponents[1].Opponent.Name
+		teamBID = pm.Opponents[1].Opponent.ID
+	}
+
+	if teamAID == 0 && teamBID == 0 {
+		return zero, false
+	}
+
+	m := domain.Match{
+		ID:      pm.ID,
+		TeamA:   teamA,
+		TeamB:   teamB,
+		TeamAID: teamAID,
+		TeamBID: teamBID,
+		Time:    pm.BeginAt,
+		Status:  pm.Status,
+		Streams: mapPandaStreams(pm),
+	}
+	if pm.EndAt != nil && !pm.EndAt.IsZero() {
+		m.EndAt = *pm.EndAt
+	}
+	for _, r := range pm.Results {
+		m.Results = append(m.Results, domain.MatchResult{TeamID: r.TeamID, Score: r.Score})
+	}
+	for _, g := range pm.Games {
+		game := domain.MatchGame{
+			Position: g.Position,
+			Status:   g.Status,
+			Finished: g.Finished,
+		}
+		if g.Winner.ID != nil {
+			game.WinnerID = *g.Winner.ID
+		}
+		m.Games = append(m.Games, game)
+	}
+	// На всякий случай сортируем карты по позиции: API обычно отдает по порядку.
+	for i := 1; i < len(m.Games); i++ {
+		for j := i; j > 0 && m.Games[j].Position < m.Games[j-1].Position; j-- {
+			m.Games[j], m.Games[j-1] = m.Games[j-1], m.Games[j]
+		}
+	}
+	return m, true
+}
+
+// FetchFinishedMatchesByTeamIDs забирает завершенные матчи команд за окно
+// [since, now] для кнопки счета. Сортировка от новых к старым: как только
+// страница стала старше окна — дальше не идем, историю целиком не тянем.
+func (c *Client) FetchFinishedMatchesByTeamIDs(ctx context.Context, teamIDs []string, since time.Time) ([]domain.Match, error) {
+	if len(teamIDs) == 0 {
+		return nil, nil
+	}
+
+	const teamIDsPerRequest = 50
+	merged := make(map[int]domain.Match)
+	for start := 0; start < len(teamIDs); start += teamIDsPerRequest {
+		end := start + teamIDsPerRequest
+		if end > len(teamIDs) {
+			end = len(teamIDs)
+		}
+		chunk, err := c.fetchFinishedChunk(ctx, teamIDs[start:end], since)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range chunk {
+			merged[m.ID] = m
+		}
+	}
+
+	allMatches := make([]domain.Match, 0, len(merged))
+	for _, m := range merged {
+		allMatches = append(allMatches, m)
+	}
+	return allMatches, nil
+}
+
+func (c *Client) fetchFinishedChunk(ctx context.Context, teamIDs []string, since time.Time) ([]domain.Match, error) {
+	joinedIDs := strings.Join(teamIDs, ",")
+	var allMatches []domain.Match
+	page := 1
+
+	for {
+		url := fmt.Sprintf("https://api.pandascore.co/csgo/matches?filter[opponent_id]=%s&filter[status]=finished&sort=-begin_at&per_page=100&page=%d", joinedIDs, page)
+
+		pandaMatches, err := c.getMatchPage(ctx, url, page)
+		if err != nil {
+			return nil, err
+		}
+		if len(pandaMatches) == 0 {
+			break
+		}
+
+		stale := false
+		for _, pm := range pandaMatches {
+			// Страница отсортирована от новых к старым: встретили матч
+			// старше окна — остаток тоже старый, дальше не идем.
+			if !pm.BeginAt.IsZero() && pm.BeginAt.Before(since) {
+				stale = true
+				break
+			}
+			m, ok := mapPandaMatch(pm)
+			if !ok {
+				continue
+			}
+			allMatches = append(allMatches, m)
+		}
+		if stale || len(pandaMatches) < 100 {
+			break
+		}
+		page++
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+	}
+
+	return allMatches, nil
+}
+
+// getMatchPage выполняет GET с ретраями и декодирует страницу матчей.
+func (c *Client) getMatchPage(ctx context.Context, url string, page int) ([]pandaMatch, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	var resp *http.Response
+	var doErr error
+	var requestSuccess bool
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		resp, doErr = c.httpClient.Do(req)
+
+		if doErr == nil {
+			if resp.StatusCode == http.StatusOK {
+				requestSuccess = true
+				break
+			}
+
+			if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
+				resp.Body.Close()
+				return nil, fmt.Errorf("API client error: %d", resp.StatusCode)
+			}
+			resp.Body.Close()
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(attempt) * time.Second):
+		}
+	}
+
+	if doErr != nil {
+		return nil, fmt.Errorf("ошибка сети при запросе страницы %d: %w", page, doErr)
+	}
+	if !requestSuccess {
+		return nil, fmt.Errorf("превышено количество попыток запроса для страницы %d", page)
+	}
+
+	var pandaMatches []pandaMatch
+	err = json.NewDecoder(resp.Body).Decode(&pandaMatches)
+	resp.Body.Close()
+
+	if err != nil {
+		return nil, fmt.Errorf("ошибка парсинга страницы %d: %w", page, err)
+	}
+	return pandaMatches, nil
 }
 
 // mapPandaStreams выбирает все трансляции из streams_list (без обрезки:

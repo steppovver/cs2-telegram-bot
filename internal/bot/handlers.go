@@ -94,7 +94,7 @@ func (b *Bot) handleSubscribe(c telebot.Context) error {
 	}
 
 	menu := b.buildTeamsKeyboard("sub_", displayTeams, subs)
-	return c.Send("Выбери команды для получения уведомлений:", menu, telebot.NoPreview)
+	return c.Send("Выбери команды для получения уведомлений:\n\nНе нашел нужную? Просто введи часть ее названия в чат — найду и предложу подписаться.", menu, telebot.NoPreview)
 }
 
 func (b *Bot) handleSchedule(c telebot.Context) error {
@@ -204,10 +204,6 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 	return b.sendChunked(c, sb.String())
 }
 
-func (b *Bot) handleSearchPrompt(c telebot.Context) error {
-	return c.Send("Введите часть названия команды (например, Falcon):", b.mainMenu, telebot.NoPreview)
-}
-
 func (b *Bot) handleTextSearch(c telebot.Context) error {
 	if b.consumeTZInput(c) {
 		return nil
@@ -295,6 +291,12 @@ func (b *Bot) handleToggleSub(c telebot.Context) error {
 	if err != nil {
 		slog.Error("Ошибка изменения подписки в БД", slog.Int64("user_id", userID), slog.Int64("team_id", teamID), slog.Any("error", err))
 		return c.Respond(&telebot.CallbackResponse{Text: "Не удалось сохранить изменения."})
+	}
+
+	if isSubbed {
+		slog.Info("Отписка от команды", slog.Int64("user_id", userID), slog.Int64("team_id", teamID), slog.String("team", teamName))
+	} else {
+		slog.Info("Подписка на команду", slog.Int64("user_id", userID), slog.Int64("team_id", teamID), slog.String("team", teamName))
 	}
 
 	// Отправляем успешный toast-ответ

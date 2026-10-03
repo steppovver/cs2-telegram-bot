@@ -30,6 +30,7 @@ func (b *Bot) runRemindersCycle(ctx context.Context) {
 		return
 	}
 
+	queued := 0
 	for _, match := range matches {
 		if match.TeamA == "TBD" || match.TeamB == "TBD" {
 			continue
@@ -52,5 +53,10 @@ func (b *Bot) runRemindersCycle(ctx context.Context) {
 			slog.Error("Ошибка отметки матча как уведомленного", slog.Int("match_id", match.ID), slog.Any("error", err))
 			continue
 		}
+		queued++
+	}
+
+	if queued > 0 {
+		slog.Info("Цикл напоминаний", slog.Int("queued", queued))
 	}
 }

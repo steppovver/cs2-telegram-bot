@@ -17,6 +17,9 @@ type Config struct {
 	DigestPresetHours []int             `json:"digest_preset_hours"`
 	AdminIDs          []int64           `json:"admin_ids"`
 	MaxStreams        int               `json:"max_streams_per_match"`
+	// Интервалы в секундах: 0 = дефолт (60 / 900).
+	PollIntervalSec         int `json:"poll_interval_seconds"`
+	FinishedPollIntervalSec int `json:"finished_poll_interval_seconds"`
 }
 
 type configFile struct {
@@ -46,8 +49,50 @@ func Load(path string) (*Config, error) {
 	}
 	cfg.DigestPresetHours = NormalizeDigestHours(cfg.DigestPresetHours)
 	cfg.MaxStreams = NormalizeMaxStreams(cfg.MaxStreams)
+	cfg.PollIntervalSec = NormalizePollInterval(cfg.PollIntervalSec)
+	cfg.FinishedPollIntervalSec = NormalizeFinishedPollInterval(cfg.FinishedPollIntervalSec)
 
 	return &cfg, nil
+}
+
+// Интервалы опроса в секундах. Дефолты: поллер матчей — 60с, добор
+// завершенных — 900с. Нижние границы — от спама в PandaScore API.
+const (
+	DefaultPollIntervalSec         = 60
+	MinPollIntervalSec             = 15
+	MaxPollIntervalSec             = 3600
+	DefaultFinishedPollIntervalSec = 900
+	MinFinishedPollIntervalSec     = 60
+	MaxFinishedPollIntervalSec     = 86400
+)
+
+// NormalizePollInterval чистит интервал опроса матчей: 0 и мусор = дефолт,
+// дальше clamp в [Min, Max].
+func NormalizePollInterval(sec int) int {
+	if sec <= 0 {
+		return DefaultPollIntervalSec
+	}
+	if sec < MinPollIntervalSec {
+		return MinPollIntervalSec
+	}
+	if sec > MaxPollIntervalSec {
+		return MaxPollIntervalSec
+	}
+	return sec
+}
+
+// NormalizeFinishedPollInterval чистит интервал добора завершенных матчей.
+func NormalizeFinishedPollInterval(sec int) int {
+	if sec <= 0 {
+		return DefaultFinishedPollIntervalSec
+	}
+	if sec < MinFinishedPollIntervalSec {
+		return MinFinishedPollIntervalSec
+	}
+	if sec > MaxFinishedPollIntervalSec {
+		return MaxFinishedPollIntervalSec
+	}
+	return sec
 }
 
 // MaxStreamsHardCap — верхняя граница лимита стримов на матч, чтобы кривой

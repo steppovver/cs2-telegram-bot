@@ -46,24 +46,33 @@ func (b *Bot) runDigestCycle(ctx context.Context) {
 	}
 
 	until := time.Now().Add(24 * time.Hour)
+	sent, empty := 0, 0
 	for _, u := range users {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-		b.processDigestUser(ctx, u.UserID, u.UtcOffset, time.Now(), until, slot)
+		if b.processDigestUser(ctx, u.UserID, u.UtcOffset, time.Now(), until, slot) {
+			sent++
+		} else {
+			empty++
+		}
 	}
-	slog.Debug("Цикл дайджеста завершен", slog.Int("due", len(users)))
+	slog.Info("Цикл дайджеста",
+		slog.Int("due", len(users)),
+		slog.Int("sent", sent),
+		slog.Int("empty", empty))
 }
 
 // processDigestUser готовит и ставит в очередь персональный дайджест одного юзера.
 // Пустой результат тоже фиксирует как отправленный, чтобы не дергать БД весь час.
-func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int, now, until time.Time, slot string) {
+// Возвращает true, если дайджест с матчами поставлен в очередь.
+func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int, now, until time.Time, slot string) bool {
 	matches, err := b.storage.GetDigestMatches(userID, now.Unix(), until.Unix())
 	if err != nil {
 		slog.Error("Ошибка получения матчей для дайджеста", slog.Int64("user_id", userID), slog.Any("error", err))
-		return
+		return false
 	}
 	slog.Debug("Матчи для дайджеста",
 		slog.Int64("user_id", userID),
@@ -76,7 +85,7 @@ func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int
 		slog.Debug("Дайджест пуст, матчей на 24 часа нет",
 			slog.Int64("user_id", userID))
 		b.markDigestSent(userID, slot)
-		return
+		return false
 	}
 
 	text := "⏰ <b>Матчи ваших команд на 24 часа:</b>\n\n" + strings.Join(lines, "\n") + "\n"
@@ -84,12 +93,13 @@ func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int
 	if !ok || dropped > 0 {
 		slog.Warn("Дайджест не поставлен в очередь (переполнение), повтор на следующем тике",
 			slog.Int64("user_id", userID))
-		return
+		return false
 	}
 	b.markDigestSent(userID, slot)
-	slog.Debug("Дайджест поставлен в очередь",
+	slog.Info("Дайджест поставлен в очередь",
 		slog.Int64("user_id", userID),
 		slog.Int("lines", len(lines)))
+	return true
 }
 
 // buildDigestLines фильтрует матчи без соперника/времени и форматирует

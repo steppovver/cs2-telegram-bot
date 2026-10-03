@@ -88,7 +88,14 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done() // Уменьшаем счетчик при выходе из воркера
-		botApp.StartPoller(ctx)
+		botApp.StartPoller(ctx, time.Duration(cfg.PollIntervalSec)*time.Second)
+	}()
+
+	// Запускаем воркер добора завершенных матчей (счет для кнопки 📊)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		botApp.StartFinishedPoller(ctx, time.Duration(cfg.FinishedPollIntervalSec)*time.Second)
 	}()
 
 	// Запускаем воркер напоминаний о матчах

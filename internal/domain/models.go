@@ -9,8 +9,25 @@ type Match struct {
 	TeamAID int
 	TeamBID int
 	Time    time.Time
+	EndAt   time.Time
 	Status  string
 	Streams []MatchStream
+	Results []MatchResult
+	Games   []MatchGame
+}
+
+// MatchResult — счет серии: очки команды с team_id.
+type MatchResult struct {
+	TeamID int `json:"team_id"`
+	Score  int `json:"score"`
+}
+
+// MatchGame — одна карта серии. WinnerID = 0, пока победитель неизвестен.
+type MatchGame struct {
+	Position int    `json:"position"`
+	Status   string `json:"status"`
+	Finished bool   `json:"finished"`
+	WinnerID int    `json:"winner_id"`
 }
 
 // MatchStream — одна трансляция матча из PandaScore (streams_list).
