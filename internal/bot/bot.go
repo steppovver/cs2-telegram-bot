@@ -78,10 +78,12 @@ type Bot struct {
 
 	digestHours []int
 
+	maxStreams int
+
 	admins map[int64]bool
 }
 
-func New(b *telebot.Bot, s Storage, p PandaClient, defaultTeams []domain.TeamInfo, digestPresetHours []int, adminIDs []int64) *Bot {
+func New(b *telebot.Bot, s Storage, p PandaClient, defaultTeams []domain.TeamInfo, digestPresetHours []int, adminIDs []int64, maxStreams int) *Bot {
 	menu := &telebot.ReplyMarkup{ResizeKeyboard: true, IsPersistent: true}
 	admins := make(map[int64]bool, len(adminIDs))
 	for _, id := range adminIDs {
@@ -93,6 +95,7 @@ func New(b *telebot.Bot, s Storage, p PandaClient, defaultTeams []domain.TeamInf
 		panda:        p,
 		defaultTeams: defaultTeams,
 		digestHours:  config.NormalizeDigestHours(digestPresetHours),
+		maxStreams:   config.NormalizeMaxStreams(maxStreams),
 		admins:       admins,
 		awaitingHour: make(map[int64]bool),
 		awaitingTZ:   make(map[int64]bool),

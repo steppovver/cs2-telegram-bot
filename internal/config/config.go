@@ -16,6 +16,7 @@ type Config struct {
 	DefaultTeams      []domain.TeamInfo `json:"default_teams"`
 	DigestPresetHours []int             `json:"digest_preset_hours"`
 	AdminIDs          []int64           `json:"admin_ids"`
+	MaxStreams        int               `json:"max_streams_per_match"`
 }
 
 type configFile struct {
@@ -44,8 +45,25 @@ func Load(path string) (*Config, error) {
 		cfg.DBPath = "bot.db"
 	}
 	cfg.DigestPresetHours = NormalizeDigestHours(cfg.DigestPresetHours)
+	cfg.MaxStreams = NormalizeMaxStreams(cfg.MaxStreams)
 
 	return &cfg, nil
+}
+
+// MaxStreamsHardCap — верхняя граница лимита стримов на матч, чтобы кривой
+// ответ API с десятками ссылок не разорвал сообщение Telegram.
+const MaxStreamsHardCap = 10
+
+// NormalizeMaxStreams чистит лимит стримов: 0 и отрицательные = показать все,
+// сверху hard-cap чтобы кривой ответ API не разорвал сообщение.
+func NormalizeMaxStreams(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	if n > MaxStreamsHardCap {
+		return MaxStreamsHardCap
+	}
+	return n
 }
 
 // NormalizeDigestHours чистит пресеты часов дайджеста: только 0–23,

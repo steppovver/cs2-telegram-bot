@@ -75,7 +75,7 @@ func main() {
 		{Text: "start", Description: "Открыть главное меню"},
 	})
 
-	botApp := bot.New(tb, db, pandaClient, cfg.DefaultTeams, cfg.DigestPresetHours, cfg.AdminIDs)
+	botApp := bot.New(tb, db, pandaClient, cfg.DefaultTeams, cfg.DigestPresetHours, cfg.AdminIDs, cfg.MaxStreams)
 	botApp.RegisterHandlers()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

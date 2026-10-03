@@ -43,7 +43,7 @@ func (b *Bot) loggingMiddleware(next telebot.HandlerFunc) telebot.HandlerFunc {
 }
 
 func (b *Bot) handleStart(c telebot.Context) error {
-	return c.Send("Привет! Выбери нужное действие в меню ниже:", b.mainMenu)
+	return c.Send("Привет! Выбери нужное действие в меню ниже:", b.mainMenu, telebot.NoPreview)
 }
 
 func (b *Bot) handleSubscribe(c telebot.Context) error {
@@ -94,7 +94,7 @@ func (b *Bot) handleSubscribe(c telebot.Context) error {
 	}
 
 	menu := b.buildTeamsKeyboard("sub_", displayTeams, subs)
-	return c.Send("Выбери команды для получения уведомлений:", menu)
+	return c.Send("Выбери команды для получения уведомлений:", menu, telebot.NoPreview)
 }
 
 func (b *Bot) handleSchedule(c telebot.Context) error {
@@ -105,11 +105,11 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 	utcOffset, _ := b.storage.GetUserOffset(userID)
 	subs, err := b.storage.GetUserSubscriptions(userID)
 	if err != nil {
-		return c.Send("Произошла ошибка при обращении к базе данных.")
+		return c.Send("Произошла ошибка при обращении к базе данных.", telebot.NoPreview)
 	}
 
 	if len(subs) == 0 {
-		return c.Send("Вы еще не подписаны ни на одну команду.\nНажмите «🔔 Подписки на команды».")
+		return c.Send("Вы еще не подписаны ни на одну команду.\nНажмите «🔔 Подписки на команды».", telebot.NoPreview)
 	}
 
 	// Загружаем live-матчи из БД
@@ -121,19 +121,19 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 	// Загружаем предстоящие матчи из БД
 	matches, err := b.storage.GetUpcomingUserMatches(userID)
 	if err != nil {
-		return c.Send("Ошибка получения расписания.")
+		return c.Send("Ошибка получения расписания.", telebot.NoPreview)
 	}
 
 	if len(liveMatches) == 0 && len(matches) == 0 {
-		return c.Send("Для ваших команд в ближайшее время игр не найдено.")
+		return c.Send("Для ваших команд в ближайшее время игр не найдено.", telebot.NoPreview)
 	}
 
 	var sb strings.Builder
 
-	// Сначала live-матчи
+	// Сначала live-матчи (стримы уже в БД, API не дергаем)
 	if len(liveMatches) > 0 {
 		sb.WriteString("🔴 <b>Сейчас играют:</b>\n\n")
-		for _, match := range liveMatches {
+		for i, match := range liveMatches {
 			teamA, teamB := html.EscapeString(match.TeamA), html.EscapeString(match.TeamB)
 			for _, sub := range subs {
 				if sub.ID == match.TeamAID {
@@ -143,7 +143,10 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 					teamB = "<b>" + teamB + "</b>"
 				}
 			}
-			sb.WriteString(fmt.Sprintf("%s vs %s\n", teamA, teamB))
+			if i > 0 {
+				sb.WriteString("➖➖➖➖➖➖➖\n")
+			}
+			sb.WriteString(fmt.Sprintf("🎮 %s vs %s\n%s\n", teamA, teamB, streamLine(match, b.maxStreams)))
 		}
 		sb.WriteString("\n")
 	}
@@ -202,7 +205,7 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 }
 
 func (b *Bot) handleSearchPrompt(c telebot.Context) error {
-	return c.Send("Введите часть названия команды (например, Falcon):", b.mainMenu)
+	return c.Send("Введите часть названия команды (например, Falcon):", b.mainMenu, telebot.NoPreview)
 }
 
 func (b *Bot) handleTextSearch(c telebot.Context) error {
@@ -217,12 +220,12 @@ func (b *Bot) handleTextSearch(c telebot.Context) error {
 	}
 	query := strings.TrimSpace(c.Message().Text)
 	if len([]rune(query)) < 2 {
-		return c.Send("Введите хотя бы 2 символа для поиска.")
+		return c.Send("Введите хотя бы 2 символа для поиска.", telebot.NoPreview)
 	}
 
 	teams, err := b.storage.SearchTeams(query)
 	if err != nil || len(teams) == 0 {
-		return c.Send("Команды не найдены.", b.mainMenu)
+		return c.Send("Команды не найдены.", b.mainMenu, telebot.NoPreview)
 	}
 
 	subs, _ := b.storage.GetUserSubscriptions(c.Sender().ID)
@@ -405,7 +408,7 @@ func teamDisplayName(subs []domain.TeamInfo, teamID int) string {
 // sendChunked отправляет длинный HTML-текст кусками по строкам.
 // Дополнительные opts (например, inline-меню) цепляются к последнему куску.
 func (b *Bot) sendChunked(c telebot.Context, text string, opts ...interface{}) error {
-	htmlMode := []interface{}{telebot.ModeHTML}
+	htmlMode := []interface{}{telebot.ModeHTML, telebot.NoPreview}
 	chunks := chunkLines(text, tgChunkLimit)
 	if len(chunks) == 1 {
 		return c.Send(chunks[0], append(htmlMode, opts...)...)
@@ -420,7 +423,7 @@ func (b *Bot) sendChunked(c telebot.Context, text string, opts ...interface{}) e
 			}
 			continue
 		}
-		if e := c.Send(chunk, telebot.ModeHTML); e != nil {
+		if e := c.Send(chunk, telebot.ModeHTML, telebot.NoPreview); e != nil {
 			err = e
 		}
 	}
@@ -432,5 +435,5 @@ func (b *Bot) sendChunked(c telebot.Context, text string, opts ...interface{}) e
 // вторую клавиатуру прицепить не может (лимит Telegram: один reply_markup
 // на сообщение) — поэтому меню возвращаем отдельным сообщением.
 func (b *Bot) restoreMainMenu(c telebot.Context) error {
-	return c.Send("Выбери нужное действие в меню ниже:", b.mainMenu)
+	return c.Send("Выбери нужное действие в меню ниже:", b.mainMenu, telebot.NoPreview)
 }
