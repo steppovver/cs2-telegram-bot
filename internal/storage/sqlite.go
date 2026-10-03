@@ -598,9 +598,13 @@ func (s *Storage) GetScoreMatches(userID int64) ([]domain.Match, error) {
 }
 
 func (s *Storage) CleanOldMatches() {
-	_, err := s.db.Exec(`DELETE FROM matches WHERE begin_at < ?`, time.Now().Add(-24*time.Hour).Unix())
+	res, err := s.db.Exec(`DELETE FROM matches WHERE begin_at < ?`, time.Now().Add(-24*time.Hour).Unix())
 	if err != nil {
 		slog.Error("Ошибка при очистке старых матчей", slog.Any("error", err))
+		return
+	}
+	if n, err := res.RowsAffected(); err == nil && n > 0 {
+		slog.Info("Очистка старых матчей", slog.Int64("deleted", n))
 	}
 }
 

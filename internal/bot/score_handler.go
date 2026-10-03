@@ -45,10 +45,7 @@ func (b *Bot) handleScore(c telebot.Context) error {
 			finished = append(finished, m)
 		}
 	}
-	// Завершенные — свежие сверху (селект отдает по возрастанию).
-	for i, j := 0, len(finished)-1; i < j; i, j = i+1, j-1 {
-		finished[i], finished[j] = finished[j], finished[i]
-	}
+	// Обе группы — по возрастанию времени начала, как отдает селект.
 
 	if len(running) == 0 && len(finished) == 0 {
 		return c.Send("Пока нет матчей со счетом для ваших команд.", telebot.NoPreview)
@@ -86,7 +83,7 @@ func buildScoreBlock(m domain.Match, subs []domain.TeamInfo, utcOffset int, show
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("🎮 %s vs %s\n", highlightTeam(m.TeamA, m.TeamAID, subs), highlightTeam(m.TeamB, m.TeamBID, subs)))
 	if showDate && !m.Time.IsZero() {
-		sb.WriteString(fmt.Sprintf("📅 Сыгран: %s\n", formatTGTime(m.Time, "d", "02.01.2006", utcOffset)))
+		sb.WriteString(fmt.Sprintf("📅 Сыгран: %s\n", formatTGTime(m.Time, "dt", "02.01 15:04", utcOffset)))
 	}
 	if line := seriesLine(m); line != "" {
 		sb.WriteString(line + "\n")
