@@ -43,6 +43,9 @@ type Storage interface {
 type PandaClient interface {
 	FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string) ([]domain.Match, error)
 	FetchFinishedMatchesByTeamIDs(ctx context.Context, teamIDs []string, since time.Time) ([]domain.Match, error)
+	// APIUsage: запросов за текущий UTC-час, минимальный остаток лимита
+	// (-1 если ответов еще не было) и сам лимит в час.
+	APIUsage() (used, remaining, limit int)
 }
 
 type BroadcastTask struct {
@@ -81,6 +84,11 @@ type Bot struct {
 	digestHours []int
 
 	maxStreams int
+
+	// apiWarnAt — время последнего варнинга об израсходовании лимита API.
+	// Throttle: чаще раза в час не предупреждаем.
+	apiWarnMu sync.Mutex
+	apiWarnAt time.Time
 
 	admins map[int64]bool
 }

@@ -60,4 +60,30 @@ func (b *Bot) runFinishedCycle(ctx context.Context) {
 		}
 	}
 	slog.Info("Цикл завершенных матчей", slog.Int("matches", len(matches)))
+	b.logAPIUsage()
+}
+
+// logAPIUsage пишет 15-минутную сводку использования REST API и варнинг,
+// когда остаток лимита меньше половины (throttle: не чаще раза в час).
+// remaining — правда от сервера, used — запросы этого процесса с запуска
+// (рестарты и teams_puller мимо счетчика).
+func (b *Bot) logAPIUsage() {
+	used, remaining, limit := b.panda.APIUsage()
+	slog.Info("Использование PandaScore API",
+		slog.Int("remaining", remaining),
+		slog.Int("limit", limit),
+		slog.Int("used_since_start", used))
+	if limit <= 0 || remaining < 0 || remaining*2 >= limit {
+		return
+	}
+	b.apiWarnMu.Lock()
+	defer b.apiWarnMu.Unlock()
+	if time.Since(b.apiWarnAt) < time.Hour {
+		return
+	}
+	b.apiWarnAt = time.Now()
+	slog.Warn("Израсходовано больше половины лимита PandaScore API",
+		slog.Int("remaining", remaining),
+		slog.Int("limit", limit),
+		slog.Int("used_since_start", used))
 }

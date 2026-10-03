@@ -7,6 +7,7 @@
   "max_streams_per_match": 0,
   "poll_interval_seconds": 60,
   "finished_poll_interval_seconds": 900,
+  "api_rate_limit_per_hour": 1000,
   "digest_preset_hours": [9, 10, 11, 12],
   "default_teams": [
     { "id": 124523,  "name": "Spirit" },

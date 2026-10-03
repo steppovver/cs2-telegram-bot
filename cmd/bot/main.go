@@ -60,7 +60,7 @@ func main() {
 	}
 	defer db.Close()
 
-	pandaClient := api.NewClient(cfg.PandaToken)
+	pandaClient := api.NewClient(cfg.PandaToken, cfg.APIRateLimit)
 
 	tb, err := telebot.NewBot(telebot.Settings{
 		Token:  cfg.TelegramToken,

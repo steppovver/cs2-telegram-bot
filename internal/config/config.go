@@ -20,6 +20,8 @@ type Config struct {
 	// Интервалы в секундах: 0 = дефолт (60 / 900).
 	PollIntervalSec         int `json:"poll_interval_seconds"`
 	FinishedPollIntervalSec int `json:"finished_poll_interval_seconds"`
+	// Лимит REST-запросов PandaScore в час для варнингов: 0 = дефолт (1000).
+	APIRateLimit int `json:"api_rate_limit_per_hour"`
 }
 
 type configFile struct {
@@ -51,6 +53,7 @@ func Load(path string) (*Config, error) {
 	cfg.MaxStreams = NormalizeMaxStreams(cfg.MaxStreams)
 	cfg.PollIntervalSec = NormalizePollInterval(cfg.PollIntervalSec)
 	cfg.FinishedPollIntervalSec = NormalizeFinishedPollInterval(cfg.FinishedPollIntervalSec)
+	cfg.APIRateLimit = NormalizeAPIRateLimit(cfg.APIRateLimit)
 
 	return &cfg, nil
 }
@@ -93,6 +96,27 @@ func NormalizeFinishedPollInterval(sec int) int {
 		return MaxFinishedPollIntervalSec
 	}
 	return sec
+}
+
+// Границы лимита REST API в час для статистики использования.
+const (
+	DefaultAPIRateLimit = 1000
+	MinAPIRateLimit     = 100
+	MaxAPIRateLimit     = 1000000
+)
+
+// NormalizeAPIRateLimit чистит лимит REST-запросов в час: 0 = дефолт.
+func NormalizeAPIRateLimit(n int) int {
+	if n <= 0 {
+		return DefaultAPIRateLimit
+	}
+	if n < MinAPIRateLimit {
+		return MinAPIRateLimit
+	}
+	if n > MaxAPIRateLimit {
+		return MaxAPIRateLimit
+	}
+	return n
 }
 
 // MaxStreamsHardCap — верхняя граница лимита стримов на матч, чтобы кривой

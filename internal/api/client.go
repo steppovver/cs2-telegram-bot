@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"cs2bot/internal/domain"
@@ -20,19 +23,66 @@ const (
 	matchesPerPage = 100
 	// maxAttempts — попыток GET одной страницы до сдачи.
 	maxAttempts = 3
+	// defaultAPIRateLimit — лимит запросов в час, если не задан явно.
+	defaultAPIRateLimit = 1000
 )
 
 type Client struct {
 	apiKey     string
 	httpClient *http.Client
+
+	rateLimit int
+	statsMu   sync.Mutex
+	statsHour string
+	statsUsed int
+	// statsRemaining — минимальный остаток X-Rate-Limit-Remaining за час.
+	// -1 = ответов пока не было.
+	statsRemaining int
 }
 
-func NewClient(apiKey string) *Client {
+func NewClient(apiKey string, rateLimit int) *Client {
+	if rateLimit <= 0 {
+		rateLimit = defaultAPIRateLimit
+	}
 	return &Client{
 		apiKey: apiKey,
 		httpClient: &http.Client{
 			Timeout: 15 * time.Second,
 		},
+		rateLimit:      rateLimit,
+		statsRemaining: -1,
+	}
+}
+
+// APIUsage возвращает статистику за текущий UTC-час: число запросов,
+// минимальный остаток лимита (-1 если ответов еще не было) и сам лимит.
+func (c *Client) APIUsage() (used, remaining, limit int) {
+	c.statsMu.Lock()
+	defer c.statsMu.Unlock()
+	return c.statsUsed, c.statsRemaining, c.rateLimit
+}
+
+// noteResponse учитывает один HTTP-ответ: счетчик часа и заголовок
+// X-Rate-Limit-Remaining. Час — wall-clock UTC, как и сам лимит "в час".
+func (c *Client) noteResponse(resp *http.Response) {
+	remaining := -1
+	if v := strings.TrimSpace(resp.Header.Get("X-Rate-Limit-Remaining")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			remaining = n
+		}
+	}
+
+	c.statsMu.Lock()
+	defer c.statsMu.Unlock()
+	hour := time.Now().UTC().Format("2006-01-02-15")
+	if hour != c.statsHour {
+		c.statsHour = hour
+		c.statsUsed = 0
+		c.statsRemaining = -1
+	}
+	c.statsUsed++
+	if remaining >= 0 && (c.statsRemaining < 0 || remaining < c.statsRemaining) {
+		c.statsRemaining = remaining
 	}
 }
 
@@ -111,7 +161,7 @@ func (c *Client) queryMatches(ctx context.Context, q matchesQuery) ([]domain.Mat
 // queryChunk листает страницы одного чанка, складывая матчи в merged.
 func (c *Client) queryChunk(ctx context.Context, q matchesQuery, merged map[int]domain.Match) error {
 	for page := 1; ; page++ {
-		pandaMatches, err := c.getMatchPage(ctx, q.url(page), page)
+		pandaMatches, err := c.getMatchPage(ctx, q, page)
 		if err != nil {
 			return err
 		}
@@ -141,9 +191,10 @@ func (c *Client) queryChunk(ctx context.Context, q matchesQuery, merged map[int]
 	}
 }
 
-// getMatchPage выполняет GET с ретраями и декодирует страницу матчей.
-func (c *Client) getMatchPage(ctx context.Context, url string, page int) ([]pandaMatch, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+// getMatchPage выполняет GET страницы фильтра с ретраями и декодирует матчи.
+// URL страницы генерируется из фильтра здесь же.
+func (c *Client) getMatchPage(ctx context.Context, q matchesQuery, page int) ([]pandaMatch, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, q.url(page), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -158,11 +209,17 @@ func (c *Client) getMatchPage(ctx context.Context, url string, page int) ([]pand
 		resp, doErr = c.httpClient.Do(req)
 
 		if doErr == nil {
+			c.noteResponse(resp)
 			if resp.StatusCode == http.StatusOK {
 				requestSuccess = true
 				break
 			}
 
+			if resp.StatusCode == http.StatusTooManyRequests {
+				slog.Warn("PandaScore 429: превышаем rate limit, ждем и повторяем",
+					slog.Int("attempt", attempt),
+					slog.Int("page", page))
+			}
 			if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
 				resp.Body.Close()
 				return nil, fmt.Errorf("API client error: %d", resp.StatusCode)
