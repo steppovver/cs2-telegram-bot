@@ -146,7 +146,7 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 			if i > 0 {
 				sb.WriteString("➖➖➖➖➖➖➖\n")
 			}
-			sb.WriteString(fmt.Sprintf("🎮 %s vs %s\n%s\n", teamA, teamB, streamLine(match, b.maxStreams)))
+			sb.WriteString(fmt.Sprintf("🎮 %s vs %s%s\n%s\n", teamA, teamB, boSuffix(match), streamLine(match, b.maxStreams)))
 		}
 		sb.WriteString("\n")
 	}
@@ -177,7 +177,7 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 					teamB = "<b>" + teamB + "</b>"
 				}
 			}
-			sb.WriteString(fmt.Sprintf("%s | %s vs %s\n", timeStr, teamA, teamB))
+			sb.WriteString(fmt.Sprintf("%s | %s vs %s%s\n", timeStr, teamA, teamB, boSuffix(match)))
 		}
 		sb.WriteString("\n")
 	}
@@ -196,7 +196,7 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 					teamB = "<b>" + teamB + "</b>"
 				}
 			}
-			sb.WriteString(fmt.Sprintf("%s | %s vs %s\n", timeStr, teamA, teamB))
+			sb.WriteString(fmt.Sprintf("%s | %s vs %s%s\n", timeStr, teamA, teamB, boSuffix(match)))
 		}
 		sb.WriteString("\n")
 	}

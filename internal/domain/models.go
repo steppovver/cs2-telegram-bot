@@ -11,9 +11,11 @@ type Match struct {
 	Time    time.Time
 	EndAt   time.Time
 	Status  string
-	Streams []MatchStream
-	Results []MatchResult
-	Games   []MatchGame
+	// NumberOfGames — формат серии (1/3/5 → Bo1/Bo3/Bo5). 0 = неизвестно.
+	NumberOfGames int
+	Streams       []MatchStream
+	Results       []MatchResult
+	Games         []MatchGame
 }
 
 // MatchResult — счет серии: очки команды с team_id.

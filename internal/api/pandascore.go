@@ -30,6 +30,7 @@ type pandaMatch struct {
 	BeginAt           time.Time  `json:"begin_at"`
 	EndAt             *time.Time `json:"end_at"`
 	Status            string     `json:"status"`
+	NumberOfGames     int        `json:"number_of_games"`
 	OfficialStreamURL string     `json:"official_stream_url"`
 	Results           []struct {
 		Score  int `json:"score"`
@@ -205,14 +206,15 @@ func mapPandaMatch(pm pandaMatch) (domain.Match, bool) {
 	}
 
 	m := domain.Match{
-		ID:      pm.ID,
-		TeamA:   teamA,
-		TeamB:   teamB,
-		TeamAID: teamAID,
-		TeamBID: teamBID,
-		Time:    pm.BeginAt,
-		Status:  pm.Status,
-		Streams: mapPandaStreams(pm),
+		ID:            pm.ID,
+		TeamA:         teamA,
+		TeamB:         teamB,
+		TeamAID:       teamAID,
+		TeamBID:       teamBID,
+		Time:          pm.BeginAt,
+		Status:        pm.Status,
+		NumberOfGames: pm.NumberOfGames,
+		Streams:       mapPandaStreams(pm),
 	}
 	if pm.EndAt != nil && !pm.EndAt.IsZero() {
 		m.EndAt = *pm.EndAt

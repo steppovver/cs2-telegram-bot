@@ -111,6 +111,14 @@ func highlightTeam(name string, id int, subs []domain.TeamInfo) string {
 	return esc
 }
 
+// boSuffix возвращает " (BO3)" для заголовка матча. 0 = неизвестно, без суффикса.
+func boSuffix(m domain.Match) string {
+	if m.NumberOfGames <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (BO%d)", m.NumberOfGames)
+}
+
 // teamNameByID возвращает имя команды по ID или "" если неизвестно.
 func teamNameByID(m domain.Match, id int) string {
 	switch id {
@@ -138,8 +146,12 @@ func seriesLine(m domain.Match) string {
 	if !okA || !okB {
 		return ""
 	}
-	return fmt.Sprintf("🏆 Серия: %s %d — %d %s",
-		html.EscapeString(m.TeamA), a, bb, html.EscapeString(m.TeamB))
+	format := "🏆 Серия"
+	if m.NumberOfGames > 0 {
+		format = fmt.Sprintf("🏆 Серия (BO%d)", m.NumberOfGames)
+	}
+	return fmt.Sprintf("%s: %s %d — %d %s",
+		format, html.EscapeString(m.TeamA), a, bb, html.EscapeString(m.TeamB))
 }
 
 // gameLines строит строки по картам: победитель для законченных,

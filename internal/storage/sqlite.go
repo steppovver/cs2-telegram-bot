@@ -371,16 +371,17 @@ func decodeStreams(raw sql.NullString) []domain.MatchStream {
 
 // scorePayload — формат колонки score_json: счет серии и карты одним JSON.
 type scorePayload struct {
-	Results []domain.MatchResult `json:"results"`
-	Games   []domain.MatchGame   `json:"games"`
+	Results  []domain.MatchResult `json:"results"`
+	Games    []domain.MatchGame   `json:"games"`
+	NumGames int                  `json:"num_games"`
 }
 
 // encodeScore сериализует счет серии и карты для колонки score_json.
 func encodeScore(m domain.Match) string {
-	if len(m.Results) == 0 && len(m.Games) == 0 {
+	if len(m.Results) == 0 && len(m.Games) == 0 && m.NumberOfGames == 0 {
 		return "[]"
 	}
-	b, err := json.Marshal(scorePayload{Results: m.Results, Games: m.Games})
+	b, err := json.Marshal(scorePayload{Results: m.Results, Games: m.Games, NumGames: m.NumberOfGames})
 	if err != nil {
 		return "[]"
 	}
@@ -388,7 +389,7 @@ func encodeScore(m domain.Match) string {
 }
 
 // decodeScore разбирает score_json обратно в матч.
-// Пустые/битые значения оставляют Results/Games пустыми.
+// Пустые/битые значения оставляют Results/Games/NumberOfGames пустыми.
 func decodeScore(raw sql.NullString, m *domain.Match) {
 	s := ""
 	if raw.Valid {
@@ -403,6 +404,7 @@ func decodeScore(raw sql.NullString, m *domain.Match) {
 	}
 	m.Results = p.Results
 	m.Games = p.Games
+	m.NumberOfGames = p.NumGames
 }
 
 // endAtUnix переводит EndAt в unix для БД: 0 = неизвестно.
@@ -490,7 +492,7 @@ func sameTeamPair(a1, b1, a2, b2 string) bool {
 
 func (s *Storage) GetUpcomingUserMatches(userID int64) ([]domain.Match, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, '')
+		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.score_json, '[]')
 		FROM matches m
 		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
 		WHERE s.user_id = ? AND m.begin_at > ?
@@ -507,13 +509,15 @@ func (s *Storage) GetUpcomingUserMatches(userID int64) ([]domain.Match, error) {
 		var unixTime int64
 		var teamAID, teamBID sql.NullInt64
 		var status string
-		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status); err != nil {
+		var scoreRaw sql.NullString
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status, &scoreRaw); err != nil {
 			continue
 		}
 		m.Time = time.Unix(unixTime, 0)
 		m.TeamAID = int(teamAID.Int64)
 		m.TeamBID = int(teamBID.Int64)
 		m.Status = status
+		decodeScore(scoreRaw, &m)
 		matches = append(matches, m)
 	}
 	return matches, rows.Err()
@@ -521,7 +525,7 @@ func (s *Storage) GetUpcomingUserMatches(userID int64) ([]domain.Match, error) {
 
 func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.streams_json, '[]')
+		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.streams_json, '[]'), COALESCE(m.score_json, '[]')
 		FROM matches m
 		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
 		WHERE s.user_id = ? AND m.begin_at <= ? AND m.status = 'running'
@@ -538,8 +542,8 @@ func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
 		var unixTime int64
 		var teamAID, teamBID sql.NullInt64
 		var status string
-		var streamsRaw sql.NullString
-		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status, &streamsRaw); err != nil {
+		var streamsRaw, scoreRaw sql.NullString
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status, &streamsRaw, &scoreRaw); err != nil {
 			continue
 		}
 		m.Time = time.Unix(unixTime, 0)
@@ -547,6 +551,7 @@ func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
 		m.TeamBID = int(teamBID.Int64)
 		m.Status = status
 		m.Streams = decodeStreams(streamsRaw)
+		decodeScore(scoreRaw, &m)
 		matches = append(matches, m)
 	}
 	return matches, rows.Err()
