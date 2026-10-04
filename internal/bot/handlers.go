@@ -147,6 +147,9 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 				sb.WriteString("➖➖➖➖➖➖➖\n")
 			}
 			sb.WriteString(fmt.Sprintf("🎮 %s vs %s%s\n%s\n", teamA, teamB, boSuffix(match), streamLine(match, b.maxStreams)))
+			if line := hltvMatchLine(match); line != "" {
+				sb.WriteString(line + "\n")
+			}
 		}
 		sb.WriteString("\n")
 	}

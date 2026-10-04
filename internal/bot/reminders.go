@@ -39,8 +39,12 @@ func (b *Bot) runRemindersCycle(ctx context.Context) {
 		escA, escB := html.EscapeString(match.TeamA), html.EscapeString(match.TeamB)
 		build := func(off int) string {
 			timeStr := formatTGTime(match.Time, "t", "15:04", off)
-			return fmt.Sprintf("🔥 <b>Матч начнется с минуты на минуту!</b>\n\n🎮 <b>%s</b> vs <b>%s</b>\nНачало в %s\n%s",
+			text := fmt.Sprintf("🔥 <b>Матч начнется с минуты на минуту!</b>\n\n🎮 <b>%s</b> vs <b>%s</b>\nНачало в %s\n%s",
 				escA, escB, timeStr, streamLine(match, b.maxStreams))
+			if line := hltvMatchLine(match); line != "" {
+				text += "\n" + line
+			}
+			return text
 		}
 
 		if !b.broadcastToFans(ctx, match, build) {

@@ -36,6 +36,7 @@ func mapPandaMatch(pm pandaMatch) (domain.Match, bool) {
 		Status:        pm.Status,
 		NumberOfGames: pm.NumberOfGames,
 		Streams:       mapPandaStreams(pm),
+		Tournament:    mapPandaTournament(pm),
 	}
 	if pm.EndAt != nil && !pm.EndAt.IsZero() {
 		m.EndAt = *pm.EndAt
@@ -54,6 +55,20 @@ func mapPandaMatches(pandaMatches []pandaMatch) []domain.Match {
 		}
 	}
 	return out
+}
+
+// mapPandaTournament собирает название турнира для ссылки на HLTV:
+// "ESL Pro League Season 24 2026". Год отсекает прошлые розыгрыши.
+// Пустые части пропускаются, совсем пусто — пустая строка.
+func mapPandaTournament(pm pandaMatch) string {
+	var parts []string
+	if s := strings.TrimSpace(pm.League.Name); s != "" {
+		parts = append(parts, s)
+	}
+	if s := strings.TrimSpace(pm.Serie.FullName); s != "" {
+		parts = append(parts, s)
+	}
+	return strings.Join(parts, " ")
 }
 
 // mapPandaTeams достает пару команд. API не гарантирует порядок opponents,

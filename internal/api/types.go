@@ -49,4 +49,14 @@ type pandaMatch struct {
 	Games             []pandaGame     `json:"games"`
 	StreamsList       []pandaStream   `json:"streams_list"`
 	Opponents         []pandaOpponent `json:"opponents"`
+	League            pandaLeague     `json:"league"`
+	Serie             pandaSerie      `json:"serie"`
+}
+
+type pandaLeague struct {
+	Name string `json:"name"`
+}
+
+type pandaSerie struct {
+	FullName string `json:"full_name"`
 }

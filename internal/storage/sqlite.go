@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS matches (
 	notified INTEGER DEFAULT 0,
 	status TEXT,
 	streams_json TEXT NOT NULL DEFAULT '[]',
-	score_json TEXT NOT NULL DEFAULT '[]'
+	score_json TEXT NOT NULL DEFAULT '[]',
+	tournament TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_teams_name ON teams(name);
 CREATE INDEX IF NOT EXISTS idx_players_team_id ON players(team_id);
@@ -110,6 +111,7 @@ func InitSchema(db *sql.DB) error {
 		`ALTER TABLE matches ADD COLUMN streams_json TEXT DEFAULT '[]';`,
 		`ALTER TABLE matches ADD COLUMN score_json TEXT DEFAULT '[]';`,
 		`ALTER TABLE matches ADD COLUMN end_at INTEGER DEFAULT 0;`,
+		`ALTER TABLE matches ADD COLUMN tournament TEXT DEFAULT '';`,
 	}
 	for _, q := range alters {
 		_, err := db.Exec(q)
@@ -437,8 +439,8 @@ func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, te
 			slog.Int64("begin_at", m.Time.Unix()),
 		)
 		_, err = tx.Exec(
-			`INSERT INTO matches (id, team_a, team_b, team_a_id, team_b_id, begin_at, end_at, status, streams_json, score_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			m.ID, m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Time.Unix(), endAtUnix(m.EndAt), m.Status, encodeStreams(m.Streams), encodeScore(m),
+			`INSERT INTO matches (id, team_a, team_b, team_a_id, team_b_id, begin_at, end_at, status, streams_json, score_json, tournament) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			m.ID, m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Time.Unix(), endAtUnix(m.EndAt), m.Status, encodeStreams(m.Streams), encodeScore(m), m.Tournament,
 		)
 		if err != nil {
 			return false, false, false, false, time.Time{}, "", "", "", err
@@ -471,8 +473,8 @@ func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, te
 	}
 
 	_, err = tx.Exec(
-		`UPDATE matches SET begin_at = ?, end_at = ?, team_a = ?, team_b = ?, team_a_id = ?, team_b_id = ?, status = ?, notified = ?, streams_json = ?, score_json = ? WHERE id = ?`,
-		m.Time.Unix(), endAtUnix(m.EndAt), m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Status, newNotified, encodeStreams(m.Streams), encodeScore(m), m.ID,
+		`UPDATE matches SET begin_at = ?, end_at = ?, team_a = ?, team_b = ?, team_a_id = ?, team_b_id = ?, status = ?, notified = ?, streams_json = ?, score_json = ?, tournament = ? WHERE id = ?`,
+		m.Time.Unix(), endAtUnix(m.EndAt), m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Status, newNotified, encodeStreams(m.Streams), encodeScore(m), m.Tournament, m.ID,
 	)
 	if err != nil {
 		return false, false, false, false, time.Time{}, "", "", "", err
@@ -525,7 +527,7 @@ func (s *Storage) GetUpcomingUserMatches(userID int64) ([]domain.Match, error) {
 
 func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.streams_json, '[]'), COALESCE(m.score_json, '[]')
+		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.streams_json, '[]'), COALESCE(m.score_json, '[]'), COALESCE(m.tournament, '')
 		FROM matches m
 		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
 		WHERE s.user_id = ? AND m.begin_at <= ? AND m.status = 'running'
@@ -542,8 +544,8 @@ func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
 		var unixTime int64
 		var teamAID, teamBID sql.NullInt64
 		var status string
-		var streamsRaw, scoreRaw sql.NullString
-		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status, &streamsRaw, &scoreRaw); err != nil {
+		var streamsRaw, scoreRaw, tournamentRaw sql.NullString
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status, &streamsRaw, &scoreRaw, &tournamentRaw); err != nil {
 			continue
 		}
 		m.Time = time.Unix(unixTime, 0)
@@ -552,6 +554,9 @@ func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
 		m.Status = status
 		m.Streams = decodeStreams(streamsRaw)
 		decodeScore(scoreRaw, &m)
+		if tournamentRaw.Valid {
+			m.Tournament = tournamentRaw.String
+		}
 		matches = append(matches, m)
 	}
 	return matches, rows.Err()
@@ -562,7 +567,7 @@ func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
 // not_started сюда не попадают — счета у них нет.
 func (s *Storage) GetScoreMatches(userID int64) ([]domain.Match, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, COALESCE(m.end_at, 0), m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.streams_json, '[]'), COALESCE(m.score_json, '[]')
+		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, COALESCE(m.end_at, 0), m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.streams_json, '[]'), COALESCE(m.score_json, '[]'), COALESCE(m.tournament, '')
 		FROM matches m
 		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
 		WHERE s.user_id = ? AND m.status IN ('running', 'finished', 'post_match')
@@ -579,8 +584,8 @@ func (s *Storage) GetScoreMatches(userID int64) ([]domain.Match, error) {
 		var unixTime, endUnix int64
 		var teamAID, teamBID sql.NullInt64
 		var status string
-		var streamsRaw, scoreRaw sql.NullString
-		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &endUnix, &teamAID, &teamBID, &status, &streamsRaw, &scoreRaw); err != nil {
+		var streamsRaw, scoreRaw, tournamentRaw sql.NullString
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &endUnix, &teamAID, &teamBID, &status, &streamsRaw, &scoreRaw, &tournamentRaw); err != nil {
 			continue
 		}
 		m.Time = time.Unix(unixTime, 0)
@@ -592,6 +597,9 @@ func (s *Storage) GetScoreMatches(userID int64) ([]domain.Match, error) {
 		m.Status = status
 		m.Streams = decodeStreams(streamsRaw)
 		decodeScore(scoreRaw, &m)
+		if tournamentRaw.Valid {
+			m.Tournament = tournamentRaw.String
+		}
 		matches = append(matches, m)
 	}
 	return matches, rows.Err()
@@ -764,7 +772,7 @@ func (s *Storage) GetMatchesForReminder() ([]domain.Match, error) {
 	now := time.Now().Unix()
 	fiveMinsLater := now + (5 * 60)
 
-	query := `SELECT id, team_a, team_b, begin_at, team_a_id, team_b_id, COALESCE(streams_json, '[]')
+	query := `SELECT id, team_a, team_b, begin_at, team_a_id, team_b_id, COALESCE(streams_json, '[]'), COALESCE(tournament, '')
 	          FROM matches
 	          WHERE begin_at > ? AND begin_at <= ? AND notified = 0`
 
@@ -779,14 +787,17 @@ func (s *Storage) GetMatchesForReminder() ([]domain.Match, error) {
 		var m domain.Match
 		var unixTime int64
 		var teamAID, teamBID sql.NullInt64
-		var streamsRaw sql.NullString
-		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &streamsRaw); err != nil {
+		var streamsRaw, tournamentRaw sql.NullString
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &streamsRaw, &tournamentRaw); err != nil {
 			continue
 		}
 		m.Time = time.Unix(unixTime, 0)
 		m.TeamAID = int(teamAID.Int64)
 		m.TeamBID = int(teamBID.Int64)
 		m.Streams = decodeStreams(streamsRaw)
+		if tournamentRaw.Valid {
+			m.Tournament = tournamentRaw.String
+		}
 		matches = append(matches, m)
 	}
 	return matches, rows.Err()

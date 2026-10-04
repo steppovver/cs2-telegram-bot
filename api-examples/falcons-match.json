@@ -1,0 +1,223 @@
+[
+  {
+    "streams_list": [
+      {
+        "main": false,
+        "language": "ru",
+        "embed_url": "https://player.twitch.tv/?channel=cs2_paragon_ru",
+        "official": false,
+        "raw_url": "https://www.twitch.tv/cs2_paragon_ru"
+      },
+      {
+        "main": false,
+        "language": "fr",
+        "embed_url": "https://player.twitch.tv/?channel=croissantstrike",
+        "official": false,
+        "raw_url": "https://www.twitch.tv/croissantstrike"
+      },
+      {
+        "main": false,
+        "language": "tr",
+        "embed_url": "https://player.kick.com/maj3r",
+        "official": false,
+        "raw_url": "https://kick.com/maj3r"
+      },
+      {
+        "main": false,
+        "language": "fi",
+        "embed_url": "https://player.twitch.tv/?channel=pelaajatcom",
+        "official": false,
+        "raw_url": "https://www.twitch.tv/pelaajatcom"
+      },
+      {
+        "main": true,
+        "language": "en",
+        "embed_url": "https://player.twitch.tv/?channel=ESLCS",
+        "official": true,
+        "raw_url": "https://www.twitch.tv/ESLCS"
+      },
+      {
+        "main": false,
+        "language": "en",
+        "embed_url": "https://www.youtube.com/embed/reWC_jQ2FMY",
+        "official": false,
+        "raw_url": "https://www.youtube.com/watch?v=reWC_jQ2FMY"
+      }
+    ],
+    "match_type": "best_of",
+    "games": [
+      {
+        "complete": true,
+        "id": 233092,
+        "position": 1,
+        "status": "finished",
+        "length": 3205,
+        "finished": true,
+        "match_id": 1711369,
+        "winner": {
+          "id": 130564,
+          "type": "Team"
+        },
+        "begin_at": "2026-10-03T09:01:09Z",
+        "detailed_stats": true,
+        "end_at": "2026-10-03T09:54:34Z",
+        "forfeit": false,
+        "winner_type": "Team"
+      },
+      {
+        "complete": false,
+        "id": 233093,
+        "position": 2,
+        "status": "not_started",
+        "length": null,
+        "finished": false,
+        "match_id": 1711369,
+        "winner": {
+          "id": null,
+          "type": "Team"
+        },
+        "begin_at": null,
+        "detailed_stats": true,
+        "end_at": null,
+        "forfeit": false,
+        "winner_type": "Team"
+      },
+      {
+        "complete": false,
+        "id": 233094,
+        "position": 3,
+        "status": "not_started",
+        "length": null,
+        "finished": false,
+        "match_id": 1711369,
+        "winner": {
+          "id": null,
+          "type": "Team"
+        },
+        "begin_at": null,
+        "detailed_stats": true,
+        "end_at": null,
+        "forfeit": false,
+        "winner_type": "Team"
+      }
+    ],
+    "number_of_games": 3,
+    "videogame_title": {
+      "id": 13,
+      "name": "Counter-Strike 2",
+      "slug": "cs-2",
+      "videogame_id": 3
+    },
+    "end_at": null,
+    "begin_at": "2026-10-03T09:01:09Z",
+    "game_advantage": null,
+    "serie_id": 11004,
+    "draw": false,
+    "detailed_stats": true,
+    "forfeit": false,
+    "status": "running",
+    "slug": "2026-10-03-57b8e38a-468d-49ca-ae67-aaf7a22ff05a",
+    "original_scheduled_at": "2026-10-03T11:30:00Z",
+    "tournament_id": 22017,
+    "league": {
+      "id": 4568,
+      "name": "ESL Pro League",
+      "url": "https://pro.eslgaming.com/csgo/proleague/",
+      "slug": "cs-go-esl-pro-league",
+      "modified_at": "2021-08-23T07:15:00Z",
+      "image_url": null
+    },
+    "results": [
+      {
+        "score": 1,
+        "team_id": 130564
+      },
+      {
+        "score": 0,
+        "team_id": 3248
+      }
+    ],
+    "winner_id": null,
+    "scheduled_at": "2026-10-03T09:00:00Z",
+    "winner_type": "Team",
+    "videogame": {
+      "id": 3,
+      "name": "Counter-Strike",
+      "slug": "cs-go"
+    },
+    "live": {
+      "supported": true,
+      "url": "wss://live.pandascore.co/matches/1711369",
+      "opens_at": "2026-10-03T08:45:00.000000Z"
+    },
+    "id": 1711369,
+    "name": "Round 1: FAL vs TYLOO",
+    "tournament": {
+      "id": 22017,
+      "name": "Group Stage",
+      "type": "offline",
+      "country": "PL",
+      "slug": "cs-go-esl-pro-league-24-2026-group-stage",
+      "begin_at": "2026-10-03T09:00:00Z",
+      "detailed_stats": true,
+      "end_at": "2026-10-07T20:00:00Z",
+      "winner_id": null,
+      "winner_type": "Team",
+      "region": "EEU",
+      "serie_id": 11004,
+      "modified_at": "2026-10-01T11:55:05Z",
+      "league_id": 4568,
+      "prizepool": null,
+      "tier": "a",
+      "has_bracket": false,
+      "live_supported": true
+    },
+    "modified_at": "2026-10-03T09:57:05Z",
+    "league_id": 4568,
+    "videogame_version": null,
+    "serie": {
+      "id": 11004,
+      "name": "",
+      "year": 2026,
+      "slug": "cs-go-esl-pro-league-24-2026",
+      "begin_at": "2026-10-03T08:00:00Z",
+      "end_at": "2026-10-11T21:00:00Z",
+      "winner_id": null,
+      "winner_type": "Team",
+      "modified_at": "2026-09-21T09:40:39Z",
+      "league_id": 4568,
+      "season": "24",
+      "full_name": "Season 24 2026"
+    },
+    "opponents": [
+      {
+        "type": "Team",
+        "opponent": {
+          "id": 130564,
+          "name": "Team Falcons",
+          "location": "SA",
+          "slug": "falcons-esports",
+          "modified_at": "2026-09-25T13:30:52Z",
+          "acronym": "FAL",
+          "image_url": "https://cdn-api.pandascore.co/images/team/image/130564/team_falconslogo_square.png",
+          "dark_mode_image_url": null
+        }
+      },
+      {
+        "type": "Team",
+        "opponent": {
+          "id": 3248,
+          "name": "TYLOO",
+          "location": "CN",
+          "slug": "tyloo-cs-go",
+          "modified_at": "2026-09-25T13:30:31Z",
+          "acronym": "TYLOO",
+          "image_url": "https://cdn-api.pandascore.co/images/team/image/3248/TYLOO.png",
+          "dark_mode_image_url": null
+        }
+      }
+    ],
+    "winner": null,
+    "rescheduled": true
+  }
+]

@@ -16,6 +16,9 @@ type Match struct {
 	Streams       []MatchStream
 	Results       []MatchResult
 	Games         []MatchGame
+	// Tournament — название турнира для ссылки на HLTV
+	// ("ESL Pro League Season 24 2026"). Пусто = неизвестно.
+	Tournament string
 }
 
 // MatchResult — счет серии: очки команды с team_id.
