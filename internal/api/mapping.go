@@ -27,16 +27,18 @@ func mapPandaMatch(pm pandaMatch) (domain.Match, bool) {
 	}
 
 	m := domain.Match{
-		ID:            pm.ID,
-		TeamA:         teamA,
-		TeamB:         teamB,
-		TeamAID:       teamAID,
-		TeamBID:       teamBID,
-		Time:          pm.BeginAt,
-		Status:        pm.Status,
-		NumberOfGames: pm.NumberOfGames,
-		Streams:       mapPandaStreams(pm),
-		Tournament:    mapPandaTournament(pm),
+		ID:                pm.ID,
+		TeamA:             teamA,
+		TeamB:             teamB,
+		TeamAID:           teamAID,
+		TeamBID:           teamBID,
+		Time:              pm.BeginAt,
+		Status:            pm.Status,
+		NumberOfGames:     pm.NumberOfGames,
+		Streams:           mapPandaStreams(pm),
+		Tournament:        mapPandaTournament(pm),
+		TournamentID:      pm.Serie.ID,
+		TournamentBeginAt: pm.Serie.BeginAt,
 	}
 	if pm.EndAt != nil && !pm.EndAt.IsZero() {
 		m.EndAt = *pm.EndAt

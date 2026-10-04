@@ -70,32 +70,55 @@ func (b *Bot) handleScore(c telebot.Context) error {
 		*needDivider = true
 	}
 
+	// Завершенные режем по турнирам: заголовок группы + матчи.
+	writeFinished := func(group []tournamentGroup, needDivider *bool) {
+		if len(group) == 0 {
+			return
+		}
+		if *needDivider {
+			sb.WriteString("➖➖➖➖➖➖➖\n")
+		}
+		sb.WriteString("✅ <b>Завершенные:</b>\n\n")
+		for gi, g := range group {
+			if gi > 0 {
+				sb.WriteString("➖➖➖➖➖➖➖\n")
+			}
+			sb.WriteString(tournamentHeader(g) + "\n")
+			for mi, m := range g.Matches {
+				if mi > 0 {
+					sb.WriteString("➖➖➖➖➖➖➖\n")
+				}
+				sb.WriteString(buildScoreBlock(m, subs, utcOffset, true))
+			}
+		}
+		sb.WriteString("\n")
+		*needDivider = true
+	}
+
 	needDivider := false
 	writeGroup("🔴 <b>Сейчас идут:</b>", running, false, &needDivider)
-	writeGroup("✅ <b>Завершенные:</b>", finished, true, &needDivider)
+	writeFinished(groupMatchesByTournament(finished), &needDivider)
 
 	return b.sendChunked(c, strings.TrimSuffix(sb.String(), "\n"))
 }
 
 // buildScoreBlock форматирует один матч со счетом.
 // showDate=true добавляет строку даты проведения (для завершенных).
+// Без иконок в строках: карточек много, иконки рябят.
 func buildScoreBlock(m domain.Match, subs []domain.TeamInfo, utcOffset int, showDate bool) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("🎮 %s vs %s\n", highlightTeam(m.TeamA, m.TeamAID, subs), highlightTeam(m.TeamB, m.TeamBID, subs)))
+	sb.WriteString(fmt.Sprintf("%s vs %s\n", highlightTeam(m.TeamA, m.TeamAID, subs), highlightTeam(m.TeamB, m.TeamBID, subs)))
 	if showDate && !m.Time.IsZero() {
-		sb.WriteString(fmt.Sprintf("📅 Сыгран: %s\n", formatTGTime(m.Time, "dt", "02.01 15:04", utcOffset)))
+		sb.WriteString(fmt.Sprintf("Сыгран: %s\n", formatTGTime(m.Time, "dt", "02.01 15:04", utcOffset)))
 	}
 	if line := seriesLine(m); line != "" {
-		sb.WriteString(line + "\n")
-	}
-	for _, line := range gameLines(m) {
 		sb.WriteString(line + "\n")
 	}
 	if line := durationLine(m); line != "" {
 		sb.WriteString(line + "\n")
 	}
-	if line := hltvMatchLine(m); line != "" {
-		sb.WriteString(line + "\n")
+	if m.TeamA != "TBD" && m.TeamB != "TBD" {
+		sb.WriteString(fmt.Sprintf(`HLTV: <a href="%s">Профиль матча</a>`+"\n", html.EscapeString(hltvMatchURL(m))))
 	}
 	return sb.String()
 }
@@ -119,18 +142,6 @@ func boSuffix(m domain.Match) string {
 	return fmt.Sprintf(" (BO%d)", m.NumberOfGames)
 }
 
-// teamNameByID возвращает имя команды по ID или "" если неизвестно.
-func teamNameByID(m domain.Match, id int) string {
-	switch id {
-	case m.TeamAID:
-		return m.TeamA
-	case m.TeamBID:
-		return m.TeamB
-	default:
-		return ""
-	}
-}
-
 // seriesLine строит строку счета серии в порядке команд заголовка.
 // Нет данных — пустая строка (блок пропускается).
 func seriesLine(m domain.Match) string {
@@ -146,28 +157,12 @@ func seriesLine(m domain.Match) string {
 	if !okA || !okB {
 		return ""
 	}
-	format := "🏆 Серия"
+	format := "Серия"
 	if m.NumberOfGames > 0 {
-		format = fmt.Sprintf("🏆 Серия (BO%d)", m.NumberOfGames)
+		format = fmt.Sprintf("Серия (BO%d)", m.NumberOfGames)
 	}
 	return fmt.Sprintf("%s: %s %d — %d %s",
 		format, html.EscapeString(m.TeamA), a, bb, html.EscapeString(m.TeamB))
-}
-
-// gameLines строит строки по картам: победитель для законченных,
-// "идет сейчас" для текущей.
-func gameLines(m domain.Match) []string {
-	var lines []string
-	for _, g := range m.Games {
-		winner := teamNameByID(m, g.WinnerID)
-		switch {
-		case winner != "":
-			lines = append(lines, fmt.Sprintf("🗺 Карта %d — %s", g.Position, html.EscapeString(winner)))
-		case g.Status == "running":
-			lines = append(lines, fmt.Sprintf("🗺 Карта %d — идет сейчас", g.Position))
-		}
-	}
-	return lines
 }
 
 // durationLine строит строку длительности: для идущих — от начала до сейчас,
@@ -178,12 +173,12 @@ func durationLine(m domain.Match) string {
 	}
 	if m.Status == "running" {
 		if d := time.Since(m.Time); d > 0 {
-			return "⏱ Идет: " + formatDuration(d)
+			return "Идет: " + formatDuration(d)
 		}
 		return ""
 	}
 	if !m.EndAt.IsZero() && m.EndAt.After(m.Time) {
-		return "⏱ Длился: " + formatDuration(m.EndAt.Sub(m.Time))
+		return "Длился: " + formatDuration(m.EndAt.Sub(m.Time))
 	}
 	return ""
 }

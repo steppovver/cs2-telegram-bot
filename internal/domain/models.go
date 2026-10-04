@@ -19,6 +19,11 @@ type Match struct {
 	// Tournament — название турнира для ссылки на HLTV
 	// ("ESL Pro League Season 24 2026"). Пусто = неизвестно.
 	Tournament string
+	// TournamentID — ключ группировки (serie.id из PandaScore:
+	// сезон целиком, стадии Group/Playoffs не разделяются). 0 = неизвестно.
+	TournamentID int
+	// TournamentBeginAt — старт турнира для сортировки групп. Zero = неизвестно.
+	TournamentBeginAt time.Time
 }
 
 // MatchResult — счет серии: очки команды с team_id.

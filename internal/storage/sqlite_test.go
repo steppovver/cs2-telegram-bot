@@ -36,7 +36,9 @@ func TestMatchTournamentColumn(t *testing.T) {
 			ID: id, TeamA: "Team Falcons", TeamB: "TYLOO",
 			TeamAID: 130564, TeamBID: 3248,
 			Time: beginAt, Status: status,
-			Tournament: "ESL Pro League Season 24 2026",
+			Tournament:        "ESL Pro League Season 24 2026",
+			TournamentID:      11004,
+			TournamentBeginAt: time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC),
 		})
 		if err != nil {
 			t.Fatalf("ProcessMatch(%d): %v", id, err)
@@ -49,6 +51,26 @@ func TestMatchTournamentColumn(t *testing.T) {
 	ms, err := s.GetScoreMatches(1)
 	if got := mustTournament(t, ms, err, 1); got != "ESL Pro League Season 24 2026" {
 		t.Errorf("score Tournament = %q", got)
+	}
+	for _, m := range ms {
+		if m.ID != 1 {
+			continue
+		}
+		if m.TournamentID != 11004 {
+			t.Errorf("score TournamentID = %d, want 11004", m.TournamentID)
+		}
+		wantBegin := time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC)
+		if !m.TournamentBeginAt.Equal(wantBegin) {
+			t.Errorf("score TournamentBeginAt = %v, want %v", m.TournamentBeginAt, wantBegin)
+		}
+	}
+	var tname string
+	var tbegin int64
+	if err := s.db.QueryRow(`SELECT name, begin_at FROM tournaments WHERE id = 11004`).Scan(&tname, &tbegin); err != nil {
+		t.Fatalf("tournaments row: %v", err)
+	}
+	if tname != "ESL Pro League Season 24 2026" || tbegin != time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC).Unix() {
+		t.Errorf("tournaments row = %q %d", tname, tbegin)
 	}
 	ml, err := s.GetLiveUserMatches(1)
 	if got := mustTournament(t, ml, err, 2); got != "ESL Pro League Season 24 2026" {

@@ -58,5 +58,7 @@ type pandaLeague struct {
 }
 
 type pandaSerie struct {
-	FullName string `json:"full_name"`
+	ID       int       `json:"id"`
+	FullName string    `json:"full_name"`
+	BeginAt  time.Time `json:"begin_at"`
 }

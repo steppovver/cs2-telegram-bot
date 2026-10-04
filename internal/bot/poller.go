@@ -222,8 +222,12 @@ func buildCombinedUpdateMessage(evts []matchEvent, off int, maxStreams int) stri
 				sb.WriteString("➖➖➖➖➖➖➖\n")
 			}
 			timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
-			card := fmt.Sprintf("🎮 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s\n%s",
-				html.EscapeString(ev.match.TeamA), html.EscapeString(ev.match.TeamB), timeStr, streamLine(ev.match, maxStreams))
+			card := fmt.Sprintf("🎮 <b>%s</b> vs <b>%s</b>\n",
+				html.EscapeString(ev.match.TeamA), html.EscapeString(ev.match.TeamB))
+			if line := tournamentLine(ev.match); line != "" {
+				card += line + "\n"
+			}
+			card += fmt.Sprintf("⏰ Время: %s\n%s", timeStr, streamLine(ev.match, maxStreams))
 			if line := hltvMatchLine(ev.match); line != "" {
 				card += "\n" + line
 			}

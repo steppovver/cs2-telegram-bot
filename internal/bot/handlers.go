@@ -146,7 +146,11 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 			if i > 0 {
 				sb.WriteString("➖➖➖➖➖➖➖\n")
 			}
-			sb.WriteString(fmt.Sprintf("🎮 %s vs %s%s\n%s\n", teamA, teamB, boSuffix(match), streamLine(match, b.maxStreams)))
+			card := fmt.Sprintf("🎮 %s vs %s%s\n", teamA, teamB, boSuffix(match))
+			if line := tournamentLine(match); line != "" {
+				card += line + "\n"
+			}
+			sb.WriteString(card + fmt.Sprintf("%s\n", streamLine(match, b.maxStreams)))
 			if line := hltvMatchLine(match); line != "" {
 				sb.WriteString(line + "\n")
 			}
@@ -154,52 +158,28 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 		sb.WriteString("\n")
 	}
 
-	// Разделяем предстоящие на ближайшие (24ч) и отдалённые
-	oneDayLater := time.Now().Add(24 * time.Hour)
-	var upcoming []domain.Match
-	var further []domain.Match
-	for _, match := range matches {
-		if match.Time.Before(oneDayLater) {
-			upcoming = append(upcoming, match)
-		} else {
-			further = append(further, match)
-		}
-	}
-
-	// Ближайшие матчи
-	if len(upcoming) > 0 {
-		sb.WriteString("⚡ <b>Ближайшие матчи:</b>\n\n")
-		for _, match := range upcoming {
-			timeStr := formatTGTime(match.Time, "dt", "02.01 15:04", utcOffset)
-			teamA, teamB := html.EscapeString(match.TeamA), html.EscapeString(match.TeamB)
-			for _, sub := range subs {
-				if sub.ID == match.TeamAID {
-					teamA = "<b>" + teamA + "</b>"
-				}
-				if sub.ID == match.TeamBID {
-					teamB = "<b>" + teamB + "</b>"
-				}
+	// Все предстоящие — одним списком, сгруппированным по турнирам.
+	// Группы идут по старту турнира, матчи внутри — по времени начала.
+	if len(matches) > 0 {
+		sb.WriteString("📅 <b>Матчи:</b>\n\n")
+		for gi, group := range groupMatchesByTournament(matches) {
+			if gi > 0 {
+				sb.WriteString("➖➖➖➖➖➖➖\n")
 			}
-			sb.WriteString(fmt.Sprintf("%s | %s vs %s%s\n", timeStr, teamA, teamB, boSuffix(match)))
-		}
-		sb.WriteString("\n")
-	}
-
-	// Отдалённые матчи
-	if len(further) > 0 {
-		sb.WriteString("📅 <b>Предстоящие матчи:</b>\n\n")
-		for _, match := range further {
-			timeStr := formatTGTime(match.Time, "dt", "02.01 15:04", utcOffset)
-			teamA, teamB := html.EscapeString(match.TeamA), html.EscapeString(match.TeamB)
-			for _, sub := range subs {
-				if sub.ID == match.TeamAID {
-					teamA = "<b>" + teamA + "</b>"
+			sb.WriteString(tournamentHeader(group) + "\n")
+			for _, match := range group.Matches {
+				timeStr := formatTGTime(match.Time, "dt", "02.01 15:04", utcOffset)
+				teamA, teamB := html.EscapeString(match.TeamA), html.EscapeString(match.TeamB)
+				for _, sub := range subs {
+					if sub.ID == match.TeamAID {
+						teamA = "<b>" + teamA + "</b>"
+					}
+					if sub.ID == match.TeamBID {
+						teamB = "<b>" + teamB + "</b>"
+					}
 				}
-				if sub.ID == match.TeamBID {
-					teamB = "<b>" + teamB + "</b>"
-				}
+				sb.WriteString(fmt.Sprintf("%s | %s vs %s%s\n", timeStr, teamA, teamB, boSuffix(match)))
 			}
-			sb.WriteString(fmt.Sprintf("%s | %s vs %s%s\n", timeStr, teamA, teamB, boSuffix(match)))
 		}
 		sb.WriteString("\n")
 	}

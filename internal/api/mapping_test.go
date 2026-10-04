@@ -80,6 +80,13 @@ func TestMapPandaMatchFromFixture(t *testing.T) {
 	if m.Tournament != "ESL Pro League Season 24 2026" {
 		t.Errorf("Tournament = %q", m.Tournament)
 	}
+	if m.TournamentID != 11004 {
+		t.Errorf("TournamentID = %d, want 11004", m.TournamentID)
+	}
+	wantBegin := time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC)
+	if !m.TournamentBeginAt.Equal(wantBegin) {
+		t.Errorf("TournamentBeginAt = %v, want %v", m.TournamentBeginAt, wantBegin)
+	}
 	if m.NumberOfGames != 3 {
 		t.Errorf("NumberOfGames = %d, want 3", m.NumberOfGames)
 	}
