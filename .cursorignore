@@ -1,0 +1,24 @@
+# Секреты и локальный конфиг (дублирует .gitignore, Cursor ходит в индекс отдельно)
+.env
+config.json
+
+# SQLite — база и WAL-артефакты, не индексировать
+*.db
+*.sqlite
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Собранные бинари в корне
+/cs2bot
+/teams_puller
+/bot
+cs2bot.exe
+*.exe
+
+# Служебное
+.git/
+.gigacode_vsc/
+.vscode/
+.idea/
+deploy/backups/

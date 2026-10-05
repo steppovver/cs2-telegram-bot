@@ -1,0 +1,24 @@
+---
+description: Go style for cs2-telegram-bot
+globs: ["**/*.go"]
+alwaysApply: true
+---
+
+# Go-стиль проекта cs2-telegram-bot
+
+Стек: Go (версия из `go.mod`), SQLite (`modernc.org/sqlite`), PandaScore API, telebot.v3.
+
+Архитектура:
+- `cmd/bot/main.go` — точка входа бота
+- `cmd/teams_puller/main.go` — наполнение справочника команд
+- `internal/api/` — клиент PandaScore (чанки, ретраи, пагинация)
+- `internal/bot/` — хендлеры Telegram, воркеры (поллер, напоминания, рассылка, дайджест)
+- `internal/domain/` — доменные модели
+- `internal/storage/` — SQLite: схема, миграции, подписки, матчи
+
+Правила:
+1. Ошибки — только явно через `if err != nil`, оборачивать с контекстом `fmt.Errorf("...: %w", err)`. Не глотать ошибки.
+2. Конкурентность — `context.Context` во всех воркерах и I/O, `defer` для закрытия соединений/транзакций, без утечек горутин. Telegram — long polling, только один инстанс.
+3. Миграции и схему БД не менять без явного подтверждения пользователя.
+4. Время везде — с учетом часового пояса пользователя (дайджест хранит UTC offset).
+5. Секреты (`telegram_token`, `pandascore_token`) только из `config.json` / env, никогда в код и логи.
