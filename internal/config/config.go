@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"sort"
+	"strings"
 
 	"cs2bot/internal/domain"
 )
@@ -22,6 +23,30 @@ type Config struct {
 	FinishedPollIntervalSec int `json:"finished_poll_interval_seconds"`
 	// Лимит REST-запросов PandaScore в час для варнингов: 0 = дефолт (1000).
 	APIRateLimit int `json:"api_rate_limit_per_hour"`
+	// Поиск точных ссылок на матчи HLTV: "ddg" (по умолчанию), "searxng"
+	// или "none" (резолвер выключен, ссылки — поиск Google).
+	SearchProvider string `json:"search_provider"`
+	// SearchBaseURL — адрес инстанса SearXNG (только для search_provider=searxng).
+	SearchBaseURL string `json:"search_base_url"`
+}
+
+// Провайдеры поиска ссылок HLTV.
+const (
+	SearchProviderDDG     = "ddg"
+	SearchProviderSearXNG = "searxng"
+	SearchProviderNone    = "none"
+)
+
+// NormalizeSearchProvider приводит значение к известному провайдеру:
+// пустое = ddg, неизвестное ok=false.
+func NormalizeSearchProvider(p string) (string, bool) {
+	switch p = strings.ToLower(strings.TrimSpace(p)); p {
+	case "":
+		return SearchProviderDDG, true
+	case SearchProviderDDG, SearchProviderSearXNG, SearchProviderNone:
+		return p, true
+	}
+	return SearchProviderNone, false
 }
 
 type configFile struct {

@@ -35,7 +35,6 @@ func (b *Bot) handleScore(c telebot.Context) error {
 		return c.Send("Ошибка получения счета.", telebot.NoPreview)
 	}
 	utcOffset, _ := b.storage.GetUserOffset(userID)
-
 	var running, finished []domain.Match
 	for _, m := range matches {
 		switch m.Status {

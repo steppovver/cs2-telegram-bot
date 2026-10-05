@@ -78,6 +78,17 @@ func main() {
 	botApp := bot.New(tb, db, pandaClient, cfg.DefaultTeams, cfg.DigestPresetHours, cfg.AdminIDs, cfg.MaxStreams)
 	botApp.RegisterHandlers()
 
+	searchProvider, ok := config.NormalizeSearchProvider(cfg.SearchProvider)
+	if !ok {
+		slog.Warn("Неизвестный search_provider, резолвер ссылок HLTV выключен", slog.String("value", cfg.SearchProvider))
+	}
+	hltvSearch, err := bot.NewSearchProvider(searchProvider, cfg.SearchBaseURL)
+	if err != nil {
+		slog.Error("Ошибка настройки поиска ссылок HLTV", slog.Any("error", err))
+		os.Exit(1)
+	}
+	botApp.SetHLTVSearch(hltvSearch)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -96,6 +107,13 @@ func main() {
 	go func() {
 		defer wg.Done()
 		botApp.StartFinishedPoller(ctx, time.Duration(cfg.FinishedPollIntervalSec)*time.Second)
+	}()
+
+	// Запускаем воркер поиска точных ссылок на матчи HLTV
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		botApp.StartHLTVResolver(ctx)
 	}()
 
 	// Запускаем воркер напоминаний о матчах

@@ -20,5 +20,4 @@ Telegram-бот на Go для отслеживания матчей Counter-Str
 1. **Обработка ошибок**: явно через `if err != nil`, оборачивание с контекстом (`fmt.Errorf("...: %w", err)`).
 2. **Конкурентность**: `context.Context`, без утечек горутин, `defer` для закрытия соединений.
 3. **Проверки**: `go vet ./...`, `go build ./cmd/bot`, `go test ./...` перед завершением задачи.
-4. **Миграции БД** — только с явного подтверждения.
-5. Секреты только из `config.json` / env, не коммитить (`config.json`, `.env` в `.gitignore` и `.cursorignore`).
+4. Секреты только из `config.json` / env, не коммитить (`config.json`, `.env` в `.gitignore` и `.cursorignore`).

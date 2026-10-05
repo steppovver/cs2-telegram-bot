@@ -127,7 +127,6 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 	if len(liveMatches) == 0 && len(matches) == 0 {
 		return c.Send("Для ваших команд в ближайшее время игр не найдено.", telebot.NoPreview)
 	}
-
 	var sb strings.Builder
 
 	// Сначала live-матчи (стримы уже в БД, API не дергаем)

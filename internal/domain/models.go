@@ -24,6 +24,9 @@ type Match struct {
 	TournamentID int
 	// TournamentBeginAt — старт турнира для сортировки групп. Zero = неизвестно.
 	TournamentBeginAt time.Time
+	// HLTVURL — точная ссылка на страницу матча на HLTV (matches.hltv_url),
+	// ее находит резолвер. Пусто = не найдена, рендер подставит поиск Google.
+	HLTVURL string
 }
 
 // MatchResult — счет серии: очки команды с team_id.

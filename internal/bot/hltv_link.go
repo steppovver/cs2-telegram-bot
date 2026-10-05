@@ -15,11 +15,15 @@ func googleLuckyURL(query string) string {
 	return "https://www.google.com/search?btnI=1&q=" + url.QueryEscape(query)
 }
 
-// hltvMatchURL строит ссылку на профиль матча через Google "Мне повезёт":
+// hltvMatchURL возвращает ссылку на профиль матча: точный URL из кеша
+// резолвера (m.HLTVURL), а если его еще нет — Google "Мне повезёт":
 // открывается сразу первый результат по site:hltv.org/matches.
 // Дата (Oct 4) отсекает встречи тех же команд на прошлых турнирах.
 // Пример: https://www.google.com/search?btnI=1&q=site:hltv.org/matches+NAVI+vs+FaZe+BLAST
 func hltvMatchURL(m domain.Match) string {
+	if m.HLTVURL != "" {
+		return m.HLTVURL
+	}
 	q := "site:hltv.org/matches " + m.TeamA + " vs " + m.TeamB
 	if t := strings.TrimSpace(m.Tournament); t != "" {
 		q += " " + t
