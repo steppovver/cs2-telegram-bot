@@ -1,7 +1,11 @@
 package storage
 
 import (
+	"context"
+	"database/sql"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -94,4 +98,163 @@ func mustTournament(t *testing.T, matches []domain.Match, err error, wantID int)
 	}
 	t.Fatalf("матч %d не найден в выборке %+v", wantID, matches)
 	return ""
+}
+
+// TestForeignKeysOnEveryConnection: foreign_keys задан в DSN, поэтому должен
+// быть включен на всех соединениях пула, а не только на первом.
+func TestForeignKeysOnEveryConnection(t *testing.T) {
+	s := openTestStorage(t)
+	ctx := context.Background()
+
+	var conns []*sql.Conn
+	for i := 0; i < 5; i++ {
+		c, err := s.db.Conn(ctx)
+		if err != nil {
+			t.Fatalf("Conn %d: %v", i, err)
+		}
+		conns = append(conns, c)
+		var fk int
+		if err := c.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&fk); err != nil {
+			t.Fatalf("PRAGMA foreign_keys: %v", err)
+		}
+		if fk != 1 {
+			t.Errorf("соединение %d: foreign_keys = %d, want 1", i, fk)
+		}
+	}
+	for _, c := range conns {
+		_ = c.Close()
+	}
+}
+
+// TestRemoveUserCascade: удаление пользователя чистит подписки/настройки
+// независимо от того, какое соединение пула выполнило DELETE.
+func TestRemoveUserCascade(t *testing.T) {
+	s := openTestStorage(t)
+
+	for round := 0; round < 20; round++ {
+		uid := int64(1000 + round)
+		if err := s.Subscribe(uid, 1, "Team"); err != nil {
+			t.Fatalf("Subscribe: %v", err)
+		}
+		if err := s.SetUserOffset(uid, 5); err != nil {
+			t.Fatalf("SetUserOffset: %v", err)
+		}
+		if err := s.SetDigestEnabled(uid, true); err != nil {
+			t.Fatalf("SetDigestEnabled: %v", err)
+		}
+		if err := s.RemoveUser(uid); err != nil {
+			t.Fatalf("RemoveUser: %v", err)
+		}
+		for _, table := range []string{"subscriptions", "user_settings", "user_digest"} {
+			var n int
+			if err := s.db.QueryRow(`SELECT COUNT(*) FROM `+table+` WHERE user_id = ?`, uid).Scan(&n); err != nil {
+				t.Fatalf("count %s: %v", table, err)
+			}
+			if n != 0 {
+				t.Fatalf("round %d: в %s осталось %d строк после RemoveUser", round, table, n)
+			}
+		}
+	}
+}
+
+// TestCleanStaleRunningMatchesChunks: при числе матчей больше размера чанка
+// в post_match уходят только матчи, которых нет в ответе API.
+func TestCleanStaleRunningMatchesChunks(t *testing.T) {
+	s := openTestStorage(t)
+	const total = 1300
+	begin := time.Now().Add(-time.Hour).Unix()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id := 1; id <= total; id++ {
+		if _, err := tx.Exec(`INSERT INTO matches (id, team_a, team_b, begin_at, status) VALUES (?, 'A', 'B', ?, 'running')`, id, begin); err != nil {
+			tx.Rollback()
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Зависшие — из разных "чанков".
+	stale := map[int]bool{3: true, 700: true, 1299: true}
+	api := make(map[int]bool, total)
+	for id := 1; id <= total; id++ {
+		if !stale[id] {
+			api[id] = true
+		}
+	}
+
+	s.CleanStaleRunningMatches(api)
+
+	rows, err := s.db.Query(`SELECT id, status FROM matches`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int
+		var status string
+		if err := rows.Scan(&id, &status); err != nil {
+			t.Fatal(err)
+		}
+		want := "running"
+		if stale[id] {
+			want = "post_match"
+		}
+		if status != want {
+			t.Errorf("матч %d: status = %q, want %q", id, status, want)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Пустой ответ API — все running уходят в post_match.
+	s.CleanStaleRunningMatches(map[int]bool{})
+	var running int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM matches WHERE status = 'running'`).Scan(&running); err != nil {
+		t.Fatal(err)
+	}
+	if running != 0 {
+		t.Errorf("после пустого ответа API осталось running: %d", running)
+	}
+}
+
+// TestConcurrentWrites: параллельные ProcessMatch/Subscribe не падают
+// с SQLITE_BUSY (BEGIN IMMEDIATE + busy_timeout сериализуют писателей).
+func TestConcurrentWrites(t *testing.T) {
+	s := openTestStorage(t)
+	now := time.Now().Add(time.Hour)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 200)
+	for w := 0; w < 8; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < 20; i++ {
+				m := domain.Match{
+					ID: 1 + i, TeamA: "A", TeamB: "B", TeamAID: 1, TeamBID: 2,
+					Time: now, Status: "not_started",
+					Tournament: "T", TournamentID: 7, TournamentBeginAt: now,
+				}
+				if _, _, _, _, _, _, _, _, err := s.ProcessMatch(m); err != nil {
+					errs <- fmt.Errorf("ProcessMatch worker %d: %w", w, err)
+					return
+				}
+				if err := s.Subscribe(int64(w*100+i), 1, "A"); err != nil {
+					errs <- fmt.Errorf("Subscribe worker %d: %w", w, err)
+					return
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
 }

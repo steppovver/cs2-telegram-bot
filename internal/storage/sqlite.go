@@ -80,7 +80,12 @@ type Storage struct {
 }
 
 func Open(dbPath string) (*sql.DB, error) {
-	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL", dbPath)
+	// PRAGMA foreign_keys действует на уровне соединения, поэтому включаем его
+	// через DSN: драйвер применит его к каждому новому соединению пула.
+	// _txlock=immediate: db.Begin() стартует BEGIN IMMEDIATE, писатели
+	// сериализуются на busy_timeout, а не падают с SQLITE_BUSY_SNAPSHOT
+	// при апгрейде read->write внутри транзакции.
+	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL&_foreign_keys=1&_txlock=immediate", dbPath)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка открытия БД: %w", err)
@@ -93,11 +98,6 @@ func Open(dbPath string) (*sql.DB, error) {
 	if err := db.Ping(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("ошибка подключения к БД: %w", err)
-	}
-
-	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("ошибка включения внешних ключей: %w", err)
 	}
 
 	return db, nil
@@ -443,41 +443,91 @@ func (s *Storage) CleanOldMatches() {
 	}
 }
 
-func (s *Storage) CleanStaleRunningMatches(apiMatchIDs map[int]bool) {
-	// Чанкуем IN-клаузу под лимит переменных SQLite (999/32766),
-	// иначе при сотнях матчей очистка всегда падает с ошибкой.
-	const chunkSize = 500
-	ids := make([]any, 0, len(apiMatchIDs))
-	for id := range apiMatchIDs {
-		ids = append(ids, id)
-	}
-	slog.Debug("CleanStaleRunningMatches", slog.Int("api_matches", len(ids)))
-
-	if len(ids) == 0 {
-		_, err := s.db.Exec(`UPDATE matches SET status = 'post_match' WHERE status = 'running'`)
-		if err != nil {
-			slog.Error("Ошибка при очистке зависших running-матчей", slog.Any("error", err))
+// staleRunningIDs возвращает id из running, которых нет в ответе API.
+func staleRunningIDs(running []int, apiMatchIDs map[int]bool) []int {
+	var stale []int
+	for _, id := range running {
+		if !apiMatchIDs[id] {
+			stale = append(stale, id)
 		}
+	}
+	return stale
+}
+
+// CleanStaleRunningMatches переводит в post_match матчи со статусом running,
+// которых больше нет в ответе API. Разницу считаем в Go: NOT IN нельзя
+// чанковать (каждый чанк пометил бы матчи из соседних чанков как зависшие),
+// а UPDATE ... IN (stale) чанкуется безопасно. Все в одной транзакции.
+func (s *Storage) CleanStaleRunningMatches(apiMatchIDs map[int]bool) {
+	slog.Debug("CleanStaleRunningMatches", slog.Int("api_matches", len(apiMatchIDs)))
+
+	n, err := s.markStaleRunning(apiMatchIDs)
+	if err != nil {
+		slog.Error("Ошибка при очистке зависших running-матчей", slog.Any("error", err))
 		return
 	}
+	if n > 0 {
+		slog.Info("Зависшие running-матчи переведены в post_match", slog.Int64("updated", n))
+	}
+}
 
-	for start := 0; start < len(ids); start += chunkSize {
-		end := start + chunkSize
-		if end > len(ids) {
-			end = len(ids)
+func (s *Storage) markStaleRunning(apiMatchIDs map[int]bool) (int64, error) {
+	// Чанкуем IN-клаузу под лимит переменных SQLite (999/32766).
+	const chunkSize = 500
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("открытие транзакции: %w", err)
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(`SELECT id FROM matches WHERE status = 'running'`)
+	if err != nil {
+		return 0, fmt.Errorf("выборка running-матчей: %w", err)
+	}
+	var running []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("чтение id running-матча: %w", err)
 		}
-		chunk := ids[start:end]
+		running = append(running, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, fmt.Errorf("обход running-матчей: %w", err)
+	}
+	// Закрываем до UPDATE: в транзакции одно соединение.
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("закрытие выборки running-матчей: %w", err)
+	}
+
+	stale := staleRunningIDs(running, apiMatchIDs)
+	var updated int64
+	for start := 0; start < len(stale); start += chunkSize {
+		end := min(start+chunkSize, len(stale))
+		chunk := stale[start:end]
+		args := make([]any, len(chunk))
 		placeholders := make([]string, len(chunk))
-		for i := range chunk {
+		for i, id := range chunk {
+			args[i] = id
 			placeholders[i] = "?"
 		}
-		query := `UPDATE matches SET status = 'post_match'
-			WHERE status = 'running' AND id NOT IN (` + strings.Join(placeholders, ",") + `)`
-		if _, err := s.db.Exec(query, chunk...); err != nil {
-			slog.Error("Ошибка при очистке зависших running-матчей", slog.Any("error", err))
-			return
+		res, err := tx.Exec(`UPDATE matches SET status = 'post_match'
+			WHERE status = 'running' AND id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+		if err != nil {
+			return 0, fmt.Errorf("обновление зависших матчей: %w", err)
+		}
+		if n, err := res.RowsAffected(); err == nil {
+			updated += n
 		}
 	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("коммит: %w", err)
+	}
+	return updated, nil
 }
 
 func (s *Storage) Subscribe(userID, teamID int64, teamName string) error {
