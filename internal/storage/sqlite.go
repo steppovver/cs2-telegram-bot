@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -57,6 +55,7 @@ CREATE TABLE IF NOT EXISTS tournaments (
 CREATE INDEX IF NOT EXISTS idx_teams_name ON teams(name);
 CREATE INDEX IF NOT EXISTS idx_players_team_id ON players(team_id);
 CREATE INDEX IF NOT EXISTS idx_matches_begin_at ON matches(begin_at);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_team ON subscriptions(team_id);
 CREATE TABLE IF NOT EXISTS user_digest (
 	user_id INTEGER PRIMARY KEY,
 	enabled INTEGER NOT NULL DEFAULT 0,
@@ -106,26 +105,8 @@ func Open(dbPath string) (*sql.DB, error) {
 
 func InitSchema(db *sql.DB) error {
 	if _, err := db.Exec(schema); err != nil {
-		return err
+		return fmt.Errorf("ошибка создания схемы БД: %w", err)
 	}
-
-	alters := []string{
-		`ALTER TABLE matches ADD COLUMN notified INTEGER DEFAULT 0;`,
-		`ALTER TABLE matches ADD COLUMN team_a_id INTEGER;`,
-		`ALTER TABLE matches ADD COLUMN team_b_id INTEGER;`,
-		`ALTER TABLE matches ADD COLUMN status TEXT;`,
-		`ALTER TABLE matches ADD COLUMN streams_json TEXT DEFAULT '[]';`,
-		`ALTER TABLE matches ADD COLUMN score_json TEXT DEFAULT '[]';`,
-		`ALTER TABLE matches ADD COLUMN end_at INTEGER DEFAULT 0;`,
-		`ALTER TABLE matches ADD COLUMN tournament_id INTEGER DEFAULT 0;`,
-	}
-	for _, q := range alters {
-		_, err := db.Exec(q)
-		if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-			return fmt.Errorf("ошибка обновления структуры БД: %w", err)
-		}
-	}
-
 	return nil
 }
 
@@ -142,24 +123,6 @@ func NewStorage(dbPath string) (*Storage, error) {
 		return nil, err
 	}
 
-	if err := s.migrateLegacyTeamsDB(dbPath); err != nil {
-		slog.Warn("Не удалось перенести данные из teams.db", slog.Any("error", err))
-	}
-
-	if err := s.migrateSubscriptionsToTeamID(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("ошибка миграции подписок: %w", err)
-	}
-
-	if err := s.backfillMatchTeamIDs(); err != nil {
-		slog.Warn("Не удалось заполнить ID команд в матчах", slog.Any("error", err))
-	}
-
-	if err := s.migrateDigestHoursToUTC(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("ошибка миграции часов дайджеста: %w", err)
-	}
-
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM teams`).Scan(&count); err == nil {
 		slog.Info("Подключение к БД успешно", slog.Int("всего_команд", count))
@@ -168,174 +131,6 @@ func NewStorage(dbPath string) (*Storage, error) {
 	}
 
 	return s, nil
-}
-
-func (s *Storage) tableColumns(table string) (map[string]bool, error) {
-	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	cols := make(map[string]bool)
-	for rows.Next() {
-		var cid int
-		var name, ctype string
-		var notnull, pk int
-		var dflt sql.NullString
-		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-			return nil, err
-		}
-		cols[name] = true
-	}
-	return cols, rows.Err()
-}
-
-func (s *Storage) migrateLegacyTeamsDB(dbPath string) error {
-	legacyPath := filepath.Join(filepath.Dir(dbPath), "teams.db")
-	if _, err := os.Stat(legacyPath); err != nil {
-		return nil
-	}
-
-	var count int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM teams`).Scan(&count); err != nil {
-		return err
-	}
-	if count > 0 {
-		return nil
-	}
-
-	if _, err := s.db.Exec(`ATTACH DATABASE ? AS legacy`, legacyPath); err != nil {
-		return err
-	}
-	defer s.db.Exec(`DETACH DATABASE legacy`)
-
-	if _, err := s.db.Exec(`INSERT OR IGNORE INTO teams SELECT * FROM legacy.teams`); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec(`INSERT OR IGNORE INTO players SELECT * FROM legacy.players`); err != nil {
-		return err
-	}
-
-	slog.Info("Данные команд перенесены из teams.db")
-	return nil
-}
-
-func (s *Storage) migrateSubscriptionsToTeamID() error {
-	cols, err := s.tableColumns("subscriptions")
-	if err != nil {
-		return err
-	}
-	if !cols["team_name"] {
-		_, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_subscriptions_team ON subscriptions(team_id)`)
-		return err
-	}
-
-	var before int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM subscriptions`).Scan(&before); err != nil {
-		return err
-	}
-
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.Exec(`
-		CREATE TABLE subscriptions_new (
-			user_id INTEGER NOT NULL,
-			team_id INTEGER NOT NULL,
-			PRIMARY KEY (user_id, team_id),
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-			FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
-		)
-	`); err != nil {
-		return err
-	}
-
-	if _, err := tx.Exec(`
-		INSERT OR IGNORE INTO subscriptions_new (user_id, team_id)
-		SELECT DISTINCT s.user_id, t.id
-		FROM subscriptions s
-		INNER JOIN teams t ON t.name = s.team_name COLLATE NOCASE
-	`); err != nil {
-		return err
-	}
-
-	if _, err := tx.Exec(`DROP TABLE subscriptions`); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`ALTER TABLE subscriptions_new RENAME TO subscriptions`); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_subscriptions_team ON subscriptions(team_id)`); err != nil {
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
-	var after int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM subscriptions`).Scan(&after); err != nil {
-		return err
-	}
-	slog.Info("Подписки переведены на team_id",
-		slog.Int("было", before),
-		slog.Int("стало", after),
-		slog.Int("без_совпадения", before-after),
-	)
-	return nil
-}
-
-func (s *Storage) backfillMatchTeamIDs() error {
-	_, err := s.db.Exec(`
-		UPDATE matches
-		SET team_a_id = (
-			SELECT id FROM teams WHERE name = matches.team_a COLLATE NOCASE LIMIT 1
-		)
-		WHERE team_a_id IS NULL OR team_a_id = 0
-	`)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.Exec(`
-		UPDATE matches
-		SET team_b_id = (
-			SELECT id FROM teams WHERE name = matches.team_b COLLATE NOCASE LIMIT 1
-		)
-		WHERE team_b_id IS NULL OR team_b_id = 0
-	`)
-	return err
-}
-
-// migrateDigestHoursToUTC разово переводит user_digest.hour из локального
-// wall-time в UTC: hour_utc = (hour_local - offset). Идемпотентно через meta.
-// Старый прод хранил МСК-часы без строк в user_settings -> COALESCE дает 3.
-func (s *Storage) migrateDigestHoursToUTC() error {
-	var v string
-	err := s.db.QueryRow(`SELECT value FROM meta WHERE key = 'digest_hour_version'`).Scan(&v)
-	if err == nil && v == "2" {
-		return nil
-	}
-	if err != nil && err != sql.ErrNoRows {
-		return err
-	}
-	if _, err := s.db.Exec(`
-		UPDATE user_digest SET hour = (
-			(hour - COALESCE(
-				(SELECT utc_offset FROM user_settings WHERE user_settings.user_id = user_digest.user_id),
-				3) + 48) % 24)
-	`); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec(`INSERT INTO meta (key, value) VALUES ('digest_hour_version', '2')
-		ON CONFLICT(key) DO UPDATE SET value = excluded.value`); err != nil {
-		return err
-	}
-	slog.Info("Часы дайджеста переведены в UTC")
-	return nil
 }
 
 // encodeStreams сериализует весь список стримов в JSON для колонки streams_json.
