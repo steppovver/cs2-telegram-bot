@@ -15,7 +15,7 @@ func TestHltvMatchURL(t *testing.T) {
 		Tournament: "ESL Pro League Season 24 2026",
 		Time:       time.Date(2026, 10, 3, 9, 1, 0, 0, time.UTC),
 	}
-	want := "https://duckduckgo.com/?q=%21ducky+site%3Ahltv.org%2Fmatches+Team+Falcons+vs+TYLOO+ESL+Pro+League+Season+24+2026+Oct+3"
+	want := "https://www.google.com/search?btnI=1&q=site%3Ahltv.org%2Fmatches+Team+Falcons+vs+TYLOO+ESL+Pro+League+Season+24+2026+Oct+3"
 	if got := hltvMatchURL(m); got != want {
 		t.Errorf("hltvMatchURL = %q, want %q", got, want)
 	}
@@ -35,7 +35,7 @@ func TestHltvMatchURLNoTournament(t *testing.T) {
 func TestHltvMatchLine(t *testing.T) {
 	m := domain.Match{TeamA: "Team Falcons", TeamB: "TYLOO", Tournament: "ESL Pro League"}
 	line := hltvMatchLine(m)
-	if !strings.HasPrefix(line, "📊 HLTV: <a href=\"https://duckduckgo.com/?q=") {
+	if !strings.HasPrefix(line, "📊 HLTV: <a href=\"https://www.google.com/search?") {
 		t.Errorf("hltvMatchLine = %q", line)
 	}
 	if !strings.HasSuffix(line, "\">Профиль матча</a>") {

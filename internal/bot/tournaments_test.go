@@ -50,7 +50,7 @@ func TestGroupMatchesByTournament(t *testing.T) {
 func TestTournamentHeader(t *testing.T) {
 	g := tournamentGroup{ID: 11004, Name: "ESL Pro League Season 24 2026"}
 	h := tournamentHeader(g)
-	if !strings.HasPrefix(h, "🏆 <a href=\"https://duckduckgo.com/?q=") {
+	if !strings.HasPrefix(h, "🏆 <a href=\"https://www.google.com/search?") {
 		t.Errorf("header = %q", h)
 	}
 	if !strings.Contains(h, "ESL+Pro+League") {
@@ -64,7 +64,7 @@ func TestTournamentHeader(t *testing.T) {
 func TestTournamentLine(t *testing.T) {
 	m := domain.Match{Tournament: "ESL Pro League Season 24 2026"}
 	line := tournamentLine(m)
-	if !strings.HasPrefix(line, "🏟 Турнир: <a href=\"https://duckduckgo.com/?q=") {
+	if !strings.HasPrefix(line, "🏟 Турнир: <a href=\"https://www.google.com/search?") {
 		t.Errorf("line = %q", line)
 	}
 	if got := tournamentLine(domain.Match{}); got != "" {
@@ -74,7 +74,7 @@ func TestTournamentLine(t *testing.T) {
 
 func TestHltvEventURL(t *testing.T) {
 	got := hltvEventURL("ESL Pro League Season 24 2026")
-	if !strings.HasPrefix(got, "https://duckduckgo.com/?q=%21ducky+site%3Ahltv.org%2Fevents+ESL+Pro+League") {
+	if !strings.HasPrefix(got, "https://www.google.com/search?btnI=1&q=site%3Ahltv.org%2Fevents+ESL+Pro+League") {
 		t.Errorf("event URL = %q", got)
 	}
 	if strings.Contains(got, " ") {

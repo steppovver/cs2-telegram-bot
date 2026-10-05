@@ -3,7 +3,6 @@ package bot
 import (
 	"fmt"
 	"html"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -78,9 +77,9 @@ func groupSortKey(g tournamentGroup) time.Time {
 	return time.Time{}
 }
 
-// hltvEventURL строит ссылку на страницу турнира через DuckDuckGo !ducky.
+// hltvEventURL строит ссылку на страницу турнира через Google "Мне повезёт".
 func hltvEventURL(tournament string) string {
-	return "https://duckduckgo.com/?q=" + url.QueryEscape("!ducky site:hltv.org/events "+strings.TrimSpace(tournament))
+	return googleLuckyURL("site:hltv.org/events " + strings.TrimSpace(tournament))
 }
 
 // tournamentHeader — заголовок группы: кликабельное имя турнира.
