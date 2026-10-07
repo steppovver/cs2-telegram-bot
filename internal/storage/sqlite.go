@@ -44,7 +44,9 @@ CREATE TABLE IF NOT EXISTS matches (
 	status TEXT,
 	streams_json TEXT NOT NULL DEFAULT '[]',
 	score_json TEXT NOT NULL DEFAULT '[]',
-	tournament_id INTEGER NOT NULL DEFAULT 0
+	tournament_id INTEGER NOT NULL DEFAULT 0,
+	hltv_url TEXT NOT NULL DEFAULT '',
+	hltv_checked_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS tournaments (
 	id INTEGER PRIMARY KEY,
@@ -106,6 +108,32 @@ func Open(dbPath string) (*sql.DB, error) {
 func InitSchema(db *sql.DB) error {
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("ошибка создания схемы БД: %w", err)
+	}
+	return migrateSchema(db)
+}
+
+// matchColumnMigrations — колонки matches, добавленные после первой версии
+// схемы. CREATE TABLE IF NOT EXISTS не меняет уже существующую таблицу,
+// поэтому в старых БД недостающие колонки добавляются через ALTER.
+var matchColumnMigrations = []struct{ name, def string }{
+	{"hltv_url", "TEXT NOT NULL DEFAULT ''"},
+	{"hltv_checked_at", "INTEGER NOT NULL DEFAULT 0"},
+}
+
+// migrateSchema идемпотентно добавляет недостающие колонки в matches.
+func migrateSchema(db *sql.DB) error {
+	for _, c := range matchColumnMigrations {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('matches') WHERE name = ?`, c.name).Scan(&n); err != nil {
+			return fmt.Errorf("проверка колонки matches.%s: %w", c.name, err)
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE matches ADD COLUMN ` + c.name + ` ` + c.def); err != nil {
+			return fmt.Errorf("добавление колонки matches.%s: %w", c.name, err)
+		}
+		slog.Info("Миграция БД: добавлена колонка", slog.String("column", "matches."+c.name))
 	}
 	return nil
 }
@@ -296,9 +324,20 @@ func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, te
 		newNotified = 0
 	}
 
+	// Смена соперника делает найденную страницу HLTV неверной: сбрасываем
+	// ссылку, резолвер найдет ее заново для новой пары.
+	resetHLTV := 0
+	if teamsChanged {
+		resetHLTV = 1
+	}
+
 	_, err = tx.Exec(
-		`UPDATE matches SET begin_at = ?, end_at = ?, team_a = ?, team_b = ?, team_a_id = ?, team_b_id = ?, status = ?, notified = ?, streams_json = ?, score_json = ?, tournament_id = ? WHERE id = ?`,
-		m.Time.Unix(), endAtUnix(m.EndAt), m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Status, newNotified, encodeStreams(m.Streams), encodeScore(m), m.TournamentID, m.ID,
+		`UPDATE matches SET begin_at = ?, end_at = ?, team_a = ?, team_b = ?, team_a_id = ?, team_b_id = ?, status = ?, notified = ?, streams_json = ?, score_json = ?, tournament_id = ?,
+			hltv_url = CASE WHEN ? = 1 THEN '' ELSE hltv_url END,
+			hltv_checked_at = CASE WHEN ? = 1 THEN 0 ELSE hltv_checked_at END
+		WHERE id = ?`,
+		m.Time.Unix(), endAtUnix(m.EndAt), m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Status, newNotified, encodeStreams(m.Streams), encodeScore(m), m.TournamentID,
+		resetHLTV, resetHLTV, m.ID,
 	)
 	if err != nil {
 		return false, false, false, false, time.Time{}, "", "", "", err
@@ -318,7 +357,7 @@ func sameTeamPair(a1, b1, a2, b2 string) bool {
 
 func (s *Storage) GetUpcomingUserMatches(userID int64) ([]domain.Match, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.score_json, '[]'), m.tournament_id, COALESCE(t.name, ''), COALESCE(t.begin_at, 0)
+		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.score_json, '[]'), m.tournament_id, COALESCE(t.name, ''), COALESCE(t.begin_at, 0), m.hltv_url
 		FROM matches m
 		LEFT JOIN tournaments t ON t.id = m.tournament_id
 		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
@@ -338,7 +377,7 @@ func (s *Storage) GetUpcomingUserMatches(userID int64) ([]domain.Match, error) {
 		var status string
 		var scoreRaw, tournamentName sql.NullString
 		var tournamentBegin int64
-		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status, &scoreRaw, &m.TournamentID, &tournamentName, &tournamentBegin); err != nil {
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status, &scoreRaw, &m.TournamentID, &tournamentName, &tournamentBegin, &m.HLTVURL); err != nil {
 			continue
 		}
 		m.Time = time.Unix(unixTime, 0)
@@ -354,7 +393,7 @@ func (s *Storage) GetUpcomingUserMatches(userID int64) ([]domain.Match, error) {
 
 func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.streams_json, '[]'), COALESCE(m.score_json, '[]'), m.tournament_id, COALESCE(t.name, ''), COALESCE(t.begin_at, 0)
+		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.streams_json, '[]'), COALESCE(m.score_json, '[]'), m.tournament_id, COALESCE(t.name, ''), COALESCE(t.begin_at, 0), m.hltv_url
 		FROM matches m
 		LEFT JOIN tournaments t ON t.id = m.tournament_id
 		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
@@ -374,7 +413,7 @@ func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
 		var status string
 		var streamsRaw, scoreRaw, tournamentName sql.NullString
 		var tournamentBegin int64
-		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status, &streamsRaw, &scoreRaw, &m.TournamentID, &tournamentName, &tournamentBegin); err != nil {
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status, &streamsRaw, &scoreRaw, &m.TournamentID, &tournamentName, &tournamentBegin, &m.HLTVURL); err != nil {
 			continue
 		}
 		m.Time = time.Unix(unixTime, 0)
@@ -394,7 +433,7 @@ func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
 // not_started сюда не попадают — счета у них нет.
 func (s *Storage) GetScoreMatches(userID int64) ([]domain.Match, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, COALESCE(m.end_at, 0), m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.streams_json, '[]'), COALESCE(m.score_json, '[]'), m.tournament_id, COALESCE(t.name, ''), COALESCE(t.begin_at, 0)
+		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, COALESCE(m.end_at, 0), m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.streams_json, '[]'), COALESCE(m.score_json, '[]'), m.tournament_id, COALESCE(t.name, ''), COALESCE(t.begin_at, 0), m.hltv_url
 		FROM matches m
 		LEFT JOIN tournaments t ON t.id = m.tournament_id
 		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
@@ -414,7 +453,7 @@ func (s *Storage) GetScoreMatches(userID int64) ([]domain.Match, error) {
 		var status string
 		var streamsRaw, scoreRaw, tournamentName sql.NullString
 		var tournamentBegin int64
-		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &endUnix, &teamAID, &teamBID, &status, &streamsRaw, &scoreRaw, &m.TournamentID, &tournamentName, &tournamentBegin); err != nil {
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &endUnix, &teamAID, &teamBID, &status, &streamsRaw, &scoreRaw, &m.TournamentID, &tournamentName, &tournamentBegin, &m.HLTVURL); err != nil {
 			continue
 		}
 		m.Time = time.Unix(unixTime, 0)
@@ -441,6 +480,89 @@ func (s *Storage) CleanOldMatches() {
 	if n, err := res.RowsAffected(); err == nil && n > 0 {
 		slog.Info("Очистка старых матчей", slog.Int64("deleted", n))
 	}
+}
+
+// SetMatchHLTV сохраняет результат поиска страницы матча на HLTV.
+// Пустой url с checkedAt означает "искали, не нашли" (повтор по TTL).
+func (s *Storage) SetMatchHLTV(matchID int, url string, checkedAt time.Time) error {
+	if _, err := s.db.Exec(`UPDATE matches SET hltv_url = ?, hltv_checked_at = ? WHERE id = ?`,
+		url, checkedAt.Unix(), matchID); err != nil {
+		return fmt.Errorf("сохранение ссылки HLTV матча %d: %w", matchID, err)
+	}
+	return nil
+}
+
+// GetHLTVURLs возвращает найденные ссылки HLTV для набора матчей.
+// Матчи без ссылки в результат не попадают.
+func (s *Storage) GetHLTVURLs(matchIDs []int) (map[int]string, error) {
+	out := make(map[int]string, len(matchIDs))
+	if len(matchIDs) == 0 {
+		return out, nil
+	}
+	const chunk = 500
+	for start := 0; start < len(matchIDs); start += chunk {
+		part := matchIDs[start:min(start+chunk, len(matchIDs))]
+
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(part)), ",")
+		args := make([]any, len(part))
+		for i, id := range part {
+			args[i] = id
+		}
+		rows, err := s.db.Query(`SELECT id, hltv_url FROM matches WHERE hltv_url != '' AND id IN (`+placeholders+`)`, args...)
+		if err != nil {
+			return nil, fmt.Errorf("чтение ссылок HLTV: %w", err)
+		}
+		for rows.Next() {
+			var id int
+			var u string
+			if err := rows.Scan(&id, &u); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("скан ссылки HLTV: %w", err)
+			}
+			out[id] = u
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, fmt.Errorf("чтение ссылок HLTV: %w", err)
+		}
+	}
+	return out, nil
+}
+
+// GetMatchesForHLTVResolve возвращает матчи с известными командами,
+// начало которых попадает в [from, to], у которых ссылка HLTV еще не найдена
+// и последняя попытка поиска была до retryBefore (или не было вовсе).
+// Название турнира нужно для проверки найденной страницы.
+func (s *Storage) GetMatchesForHLTVResolve(from, to, retryBefore time.Time) ([]domain.Match, error) {
+	rows, err := s.db.Query(`
+		SELECT m.id, m.team_a, m.team_b, m.begin_at, COALESCE(t.name, '')
+		FROM matches m
+		LEFT JOIN tournaments t ON t.id = m.tournament_id
+		WHERE m.begin_at >= ? AND m.begin_at <= ?
+		  AND m.team_a != 'TBD' AND m.team_b != 'TBD'
+		  AND m.hltv_url = '' AND m.hltv_checked_at < ?
+		ORDER BY m.begin_at ASC
+	`, from.Unix(), to.Unix(), retryBefore.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("выборка матчей для HLTV: %w", err)
+	}
+	defer rows.Close()
+
+	var matches []domain.Match
+	for rows.Next() {
+		var m domain.Match
+		var unixTime int64
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &m.Tournament); err != nil {
+			return nil, fmt.Errorf("скан матча для HLTV: %w", err)
+		}
+		m.Time = time.Unix(unixTime, 0)
+		matches = append(matches, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("выборка матчей для HLTV: %w", err)
+	}
+	return matches, nil
 }
 
 // staleRunningIDs возвращает id из running, которых нет в ответе API.
@@ -649,7 +771,7 @@ func (s *Storage) GetMatchesForReminder() ([]domain.Match, error) {
 	now := time.Now().Unix()
 	fiveMinsLater := now + (5 * 60)
 
-	query := `SELECT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.streams_json, '[]'), m.tournament_id, COALESCE(t.name, ''), COALESCE(t.begin_at, 0)
+	query := `SELECT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.streams_json, '[]'), m.tournament_id, COALESCE(t.name, ''), COALESCE(t.begin_at, 0), m.hltv_url
 	          FROM matches m
 	          LEFT JOIN tournaments t ON t.id = m.tournament_id
 	          WHERE m.begin_at > ? AND m.begin_at <= ? AND m.notified = 0`
@@ -667,7 +789,7 @@ func (s *Storage) GetMatchesForReminder() ([]domain.Match, error) {
 		var teamAID, teamBID sql.NullInt64
 		var streamsRaw, tournamentName sql.NullString
 		var tournamentBegin int64
-		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &streamsRaw, &m.TournamentID, &tournamentName, &tournamentBegin); err != nil {
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &streamsRaw, &m.TournamentID, &tournamentName, &tournamentBegin, &m.HLTVURL); err != nil {
 			continue
 		}
 		m.Time = time.Unix(unixTime, 0)
@@ -929,7 +1051,7 @@ func (s *Storage) MarkDigestSent(userID int64, date string) error {
 
 func (s *Storage) GetDigestMatches(userID int64, fromUnix, toUnix int64) ([]domain.Match, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, '')
+		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, ''), m.hltv_url
 		FROM matches m
 		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
 		WHERE s.user_id = ? AND m.begin_at > ? AND m.begin_at <= ?
@@ -946,7 +1068,7 @@ func (s *Storage) GetDigestMatches(userID int64, fromUnix, toUnix int64) ([]doma
 		var unixTime int64
 		var teamAID, teamBID sql.NullInt64
 		var status string
-		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status); err != nil {
+		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status, &m.HLTVURL); err != nil {
 			continue
 		}
 		m.Time = time.Unix(unixTime, 0)

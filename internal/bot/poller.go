@@ -141,6 +141,20 @@ func (b *Bot) runPollerCycle(ctx context.Context) {
 // broadcastMatchEvents раскладывает события цикла по пользователям и шлет
 // каждому одно объединенное сообщение (время — в его поясе).
 func (b *Bot) broadcastMatchEvents(ctx context.Context, events []matchEvent) {
+	// Ссылка HLTV нужна только карточкам "Матчи начались": подтягиваем из кеша.
+	var startedIdx []int
+	var startedMatches []domain.Match
+	for i, ev := range events {
+		if ev.kind == eventStarted {
+			startedIdx = append(startedIdx, i)
+			startedMatches = append(startedMatches, ev.match)
+		}
+	}
+	b.attachHLTV(startedMatches)
+	for j, i := range startedIdx {
+		events[i].match.HLTVURL = startedMatches[j].HLTVURL
+	}
+
 	userEvents := make(map[int64][]matchEvent)
 	for _, ev := range events {
 		users, err := b.storage.GetUsersByTeamIDs(ev.match.TeamAID, ev.match.TeamBID)

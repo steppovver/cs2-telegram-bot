@@ -97,6 +97,8 @@ go run ./cmd/bot
 | `poll_interval_seconds` | Период опроса матчей PandaScore в секундах (дефолт `60`, границы 15–3600) |
 | `finished_poll_interval_seconds` | Период добора завершенных матчей для кнопки `📊` в секундах (дефолт `900`, границы 60–86400) |
 | `api_rate_limit_per_hour` | Лимит REST-запросов PandaScore в час для статистики/варнингов (дефолт `1000`) |
+| `search_provider` | Поиск точных ссылок на матчи HLTV за 12 часов до старта: `ddg` (дефолт, DuckDuckGo без ключа), `searxng` или `none` (только поиск Google) |
+| `search_base_url` | Адрес своего инстанса SearXNG, нужен только для `search_provider=searxng` |
 
 Секреты (`config.json`, `.env`) в git не коммитятся, см. `.gitignore`.
 Пример деплойных переменных — в `.env.example`.

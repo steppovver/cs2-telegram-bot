@@ -7,6 +7,7 @@ import (
 
 	"cs2bot/internal/config"
 	"cs2bot/internal/domain"
+	"cs2bot/internal/hltv"
 
 	"gopkg.in/telebot.v3"
 )
@@ -38,6 +39,7 @@ type Storage interface {
 	GetDigestDueUsers(hourUTC int, slot string) ([]domain.DigestDueUser, error)
 	MarkDigestSent(userID int64, date string) error
 	GetDigestMatches(userID int64, fromUnix, toUnix int64) ([]domain.Match, error)
+	GetHLTVURLs(matchIDs []int) (map[int]string, error)
 }
 
 type PandaClient interface {
@@ -91,6 +93,9 @@ type Bot struct {
 	apiWarnAt time.Time
 
 	admins map[int64]bool
+
+	// hltvResolver — воркер точных ссылок HLTV; nil = выключен.
+	hltvResolver *hltv.Resolver
 }
 
 func New(b *telebot.Bot, s Storage, p PandaClient, defaultTeams []domain.TeamInfo, digestPresetHours []int, adminIDs []int64, maxStreams int) *Bot {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"cs2bot/internal/domain"
+	"cs2bot/internal/hltv"
 
 	"gopkg.in/telebot.v3"
 )
@@ -35,7 +36,6 @@ func (b *Bot) handleScore(c telebot.Context) error {
 		return c.Send("Ошибка получения счета.", telebot.NoPreview)
 	}
 	utcOffset, _ := b.storage.GetUserOffset(userID)
-
 	var running, finished []domain.Match
 	for _, m := range matches {
 		switch m.Status {
@@ -118,7 +118,7 @@ func buildScoreBlock(m domain.Match, subs []domain.TeamInfo, utcOffset int, show
 		sb.WriteString(line + "\n")
 	}
 	if m.TeamA != "TBD" && m.TeamB != "TBD" {
-		sb.WriteString(fmt.Sprintf(`HLTV: <a href="%s">Профиль матча</a>`+"\n", html.EscapeString(hltvMatchURL(m))))
+		sb.WriteString(fmt.Sprintf(`HLTV: <a href="%s">Профиль матча</a>`+"\n", html.EscapeString(hltv.MatchURL(m))))
 	}
 	return sb.String()
 }

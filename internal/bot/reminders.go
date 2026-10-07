@@ -29,7 +29,6 @@ func (b *Bot) runRemindersCycle(ctx context.Context) {
 		slog.Error("Ошибка получения матчей для напоминаний", slog.Any("error", err))
 		return
 	}
-
 	queued := 0
 	for _, match := range matches {
 		if match.TeamA == "TBD" || match.TeamB == "TBD" {

@@ -258,3 +258,134 @@ func TestConcurrentWrites(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func TestHLTVColumns(t *testing.T) {
+	s := openTestStorage(t)
+	now := time.Now()
+
+	put := func(id int, a, b string, beginAt time.Time) {
+		_, _, _, _, _, _, _, _, err := s.ProcessMatch(domain.Match{
+			ID: id, TeamA: a, TeamB: b, TeamAID: 1, TeamBID: 2, Time: beginAt, Status: "not_started",
+			Tournament: "ESL Pro League", TournamentID: 7,
+		})
+		if err != nil {
+			t.Fatalf("ProcessMatch(%d): %v", id, err)
+		}
+	}
+	put(1, "G2", "NAVI", now.Add(2*time.Hour))
+	put(2, "TBD", "NAVI", now.Add(2*time.Hour))
+	put(3, "A", "B", now.Add(20*time.Hour))
+	put(4, "C", "D", now.Add(3*time.Hour))
+
+	retryBefore := now.Add(-time.Hour)
+	ms, err := s.GetMatchesForHLTVResolve(now.Add(-time.Hour), now.Add(12*time.Hour), retryBefore)
+	if err != nil {
+		t.Fatalf("GetMatchesForHLTVResolve: %v", err)
+	}
+	if len(ms) != 2 || ms[0].ID != 1 || ms[1].ID != 4 || ms[0].Tournament != "ESL Pro League" {
+		t.Fatalf("matches = %+v, want матчи 1 и 4 с турниром (TBD и вне окна отсечены)", ms)
+	}
+
+	// Найденная ссылка выпадает из выборки и читается через GetHLTVURLs.
+	if err := s.SetMatchHLTV(1, "https://www.hltv.org/matches/1/g2-vs-navi", now); err != nil {
+		t.Fatal(err)
+	}
+	// Свежая отметка "не нашли" тоже выпадает; старая — нет.
+	if err := s.SetMatchHLTV(4, "", now); err != nil {
+		t.Fatal(err)
+	}
+	ms, _ = s.GetMatchesForHLTVResolve(now.Add(-time.Hour), now.Add(12*time.Hour), retryBefore)
+	if len(ms) != 0 {
+		t.Errorf("после сохранения ждали пустую выборку, got %+v", ms)
+	}
+	ms, _ = s.GetMatchesForHLTVResolve(now.Add(-time.Hour), now.Add(12*time.Hour), now.Add(time.Minute))
+	if len(ms) != 1 || ms[0].ID != 4 {
+		t.Errorf("по истечении TTL ждали матч 4, got %+v", ms)
+	}
+	urls, err := s.GetHLTVURLs([]int{1, 3, 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(urls) != 1 || urls[1] != "https://www.hltv.org/matches/1/g2-vs-navi" {
+		t.Errorf("GetHLTVURLs = %v", urls)
+	}
+
+	// Все селекты матчей отдают ссылку сразу в Match.HLTVURL.
+	if err := s.Subscribe(1, 1, "G2"); err != nil {
+		t.Fatal(err)
+	}
+	const want = "https://www.hltv.org/matches/1/g2-vs-navi"
+	if ms, err := s.GetUpcomingUserMatches(1); err != nil || len(ms) == 0 || ms[0].ID != 1 || ms[0].HLTVURL != want {
+		t.Errorf("GetUpcomingUserMatches: %+v, %v", ms, err)
+	}
+	fromUnix, toUnix := now.Unix(), now.Add(24*time.Hour).Unix()
+	if ms, err := s.GetDigestMatches(1, fromUnix, toUnix); err != nil || len(ms) == 0 || ms[0].HLTVURL != want {
+		t.Errorf("GetDigestMatches: %+v, %v", ms, err)
+	}
+
+	// Обновление матча без смены команд ссылку не трогает, смена соперника сбрасывает.
+	put(1, "G2", "NAVI", now.Add(2*time.Hour))
+	if urls, _ = s.GetHLTVURLs([]int{1}); urls[1] == "" {
+		t.Error("ссылка потеряна при обновлении без смены команд")
+	}
+	put(1, "G2", "FaZe", now.Add(2*time.Hour))
+	if urls, _ = s.GetHLTVURLs([]int{1}); urls[1] != "" {
+		t.Error("ссылка должна сбрасываться при смене соперника")
+	}
+}
+
+func TestGetHLTVURLsEmptyAndChunked(t *testing.T) {
+	s := openTestStorage(t)
+
+	for _, ids := range [][]int{nil, {}} {
+		urls, err := s.GetHLTVURLs(ids)
+		if err != nil || len(urls) != 0 {
+			t.Errorf("GetHLTVURLs(%v) = (%v, %v), want пустую карту без ошибки", ids, urls, err)
+		}
+	}
+
+	// Больше одного чанка (500 id) читается без ошибок.
+	if _, _, _, _, _, _, _, _, err := s.ProcessMatch(domain.Match{
+		ID: 700, TeamA: "A", TeamB: "B", TeamAID: 1, TeamBID: 2, Time: time.Now().Add(time.Hour), Status: "not_started",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetMatchHLTV(700, "https://www.hltv.org/matches/1/a-vs-b", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]int, 1200)
+	for i := range ids {
+		ids[i] = i + 1
+	}
+	urls, err := s.GetHLTVURLs(ids)
+	if err != nil || len(urls) != 1 || urls[700] == "" {
+		t.Errorf("GetHLTVURLs(1200 ids) = (%v, %v)", urls, err)
+	}
+}
+
+func TestMigrateSchemaAddsHLTVColumns(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "old.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// БД старой версии: matches без колонок HLTV и с данными.
+	if _, err := db.Exec(`CREATE TABLE matches (id INTEGER PRIMARY KEY, team_a TEXT, team_b TEXT, begin_at INTEGER);
+		INSERT INTO matches (id, team_a, team_b, begin_at) VALUES (1, 'A', 'B', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ { // повторный запуск не должен падать
+		if err := InitSchema(db); err != nil {
+			t.Fatalf("InitSchema #%d: %v", i+1, err)
+		}
+	}
+	var url string
+	var checked int64
+	if err := db.QueryRow(`SELECT hltv_url, hltv_checked_at FROM matches WHERE id = 1`).Scan(&url, &checked); err != nil {
+		t.Fatalf("колонки HLTV не добавлены: %v", err)
+	}
+	if url != "" || checked != 0 {
+		t.Errorf("дефолты: url=%q checked=%d", url, checked)
+	}
+}
