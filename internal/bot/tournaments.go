@@ -21,7 +21,7 @@ type tournamentGroup struct {
 }
 
 // groupMatchesByTournament режет матчи на группы по турниру.
-// Группы — по старту турнира (неизвестный старт — по первому матчу),
+// Группы сортируются по времени ближайшего матча в группе,
 // матчи внутри — как пришли (селекты уже отдают по времени).
 func groupMatchesByTournament(matches []domain.Match) []tournamentGroup {
 	var order []tournamentGroup
@@ -67,15 +67,18 @@ func groupMatchesByTournament(matches []domain.Match) []tournamentGroup {
 	return order
 }
 
-// groupSortKey — старт турнира, при неизвестном — первый матч группы.
+// groupSortKey — время ближайшего матча в группе.
 func groupSortKey(g tournamentGroup) time.Time {
-	if !g.BeginAt.IsZero() {
-		return g.BeginAt
+	var earliest time.Time
+	for _, m := range g.Matches {
+		if m.Time.IsZero() {
+			continue
+		}
+		if earliest.IsZero() || m.Time.Before(earliest) {
+			earliest = m.Time
+		}
 	}
-	if len(g.Matches) > 0 && !g.Matches[0].Time.IsZero() {
-		return g.Matches[0].Time
-	}
-	return time.Time{}
+	return earliest
 }
 
 // tournamentHeader — заголовок группы: кликабельное имя турнира.

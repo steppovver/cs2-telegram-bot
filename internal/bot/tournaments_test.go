@@ -29,21 +29,48 @@ func TestGroupMatchesByTournament(t *testing.T) {
 	if len(groups) != 3 {
 		t.Fatalf("групп %d, want 3", len(groups))
 	}
-	// Порядок — по старту турнира: BLAST, EPL, Прочие.
+	// Порядок — по ближайшему матчу: BLAST, Прочие (epl+1h), EPL (epl+2h).
 	if groups[0].Name != "BLAST Open Porto 2026" || len(groups[0].Matches) != 1 {
 		t.Errorf("groups[0] = %+v", groups[0])
 	}
-	if groups[1].Name != "ESL Pro League Season 24 2026" || len(groups[1].Matches) != 2 {
+	if groups[1].Name != "Прочие" || len(groups[1].Matches) != 1 {
 		t.Errorf("groups[1] = %+v", groups[1])
 	}
-	if groups[1].Matches[0].ID != 1 || groups[1].Matches[1].ID != 3 {
-		t.Errorf("порядок внутри группы нарушен: %+v", groups[1].Matches)
-	}
-	if groups[2].Name != "Прочие" || len(groups[2].Matches) != 1 {
+	if groups[2].Name != "ESL Pro League Season 24 2026" || len(groups[2].Matches) != 2 {
 		t.Errorf("groups[2] = %+v", groups[2])
+	}
+	if groups[2].Matches[0].ID != 1 || groups[2].Matches[1].ID != 3 {
+		t.Errorf("порядок внутри группы нарушен: %+v", groups[2].Matches)
 	}
 	if len(groupMatchesByTournament(nil)) != 0 {
 		t.Error("пустой вход должен давать пусто")
+	}
+}
+
+// Турнир с более поздним BeginAt, но более ранним матчем, идёт первым.
+func TestGroupMatchesByTournamentSoonestMatch(t *testing.T) {
+	eplBegin := time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC)
+	romanBegin := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	stakeBegin := time.Date(2026, 10, 10, 10, 0, 0, 0, time.UTC)
+	matches := []domain.Match{
+		tmatch(1, 1, "ESL Pro League Season 24 2026", eplBegin, time.Date(2026, 10, 9, 13, 30, 0, 0, time.UTC)),
+		tmatch(2, 2, "Roman Imperium Cup Season 9 2026", romanBegin, time.Date(2026, 10, 8, 13, 30, 0, 0, time.UTC)),
+		tmatch(3, 3, "Stake Pulse Beat III 2026", stakeBegin, time.Date(2026, 10, 15, 10, 0, 0, 0, time.UTC)),
+		tmatch(4, 1, "ESL Pro League Season 24 2026", eplBegin, time.Date(2026, 10, 9, 16, 0, 0, 0, time.UTC)),
+	}
+	groups := groupMatchesByTournament(matches)
+	if len(groups) != 3 {
+		t.Fatalf("групп %d, want 3", len(groups))
+	}
+	want := []string{
+		"Roman Imperium Cup Season 9 2026",
+		"ESL Pro League Season 24 2026",
+		"Stake Pulse Beat III 2026",
+	}
+	for i, name := range want {
+		if groups[i].Name != name {
+			t.Errorf("groups[%d] = %q, want %q", i, groups[i].Name, name)
+		}
 	}
 }
 

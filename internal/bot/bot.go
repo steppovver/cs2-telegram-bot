@@ -15,8 +15,7 @@ import (
 type Storage interface {
 	GetUserSubscriptions(userID int64) ([]domain.TeamInfo, error)
 	GetSubscribedTeamIDs() ([]string, error)
-	GetUpcomingUserMatches(userID int64) ([]domain.Match, error)
-	GetLiveUserMatches(userID int64) ([]domain.Match, error)
+	GetScheduleMatches(userID int64, untilUnix int64) (live, upcoming []domain.Match, err error)
 	GetScoreMatches(userID int64) ([]domain.Match, error)
 	GetMatchesForReminder() ([]domain.Match, error)
 	GetUsersByTeamIDs(teamAID, teamBID int) ([]int64, error)
@@ -38,7 +37,6 @@ type Storage interface {
 	GetUserOffsets(userIDs []int64) (map[int64]int, error)
 	GetDigestDueUsers(hourUTC int, slot string) ([]domain.DigestDueUser, error)
 	MarkDigestSent(userID int64, date string) error
-	GetDigestMatches(userID int64, fromUnix, toUnix int64) ([]domain.Match, error)
 	GetHLTVURLs(matchIDs []int) (map[int]string, error)
 }
 

@@ -76,9 +76,12 @@ func TestMatchTournamentColumn(t *testing.T) {
 	if tname != "ESL Pro League Season 24 2026" || tbegin != time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC).Unix() {
 		t.Errorf("tournaments row = %q %d", tname, tbegin)
 	}
-	ml, err := s.GetLiveUserMatches(1)
-	if got := mustTournament(t, ml, err, 2); got != "ESL Pro League Season 24 2026" {
+	live, upcoming, err := s.GetScheduleMatches(1, 0)
+	if got := mustTournament(t, live, err, 2); got != "ESL Pro League Season 24 2026" {
 		t.Errorf("live Tournament = %q", got)
+	}
+	if got := mustTournament(t, upcoming, nil, 3); got != "ESL Pro League Season 24 2026" {
+		t.Errorf("upcoming Tournament = %q", got)
 	}
 	mr, err := s.GetMatchesForReminder()
 	if got := mustTournament(t, mr, err, 3); got != "ESL Pro League Season 24 2026" {
@@ -310,17 +313,18 @@ func TestHLTVColumns(t *testing.T) {
 		t.Errorf("GetHLTVURLs = %v", urls)
 	}
 
-	// Все селекты матчей отдают ссылку сразу в Match.HLTVURL.
+	// GetScheduleMatches отдаёт ссылку сразу в Match.HLTVURL.
 	if err := s.Subscribe(1, 1, "G2"); err != nil {
 		t.Fatal(err)
 	}
 	const want = "https://www.hltv.org/matches/1/g2-vs-navi"
-	if ms, err := s.GetUpcomingUserMatches(1); err != nil || len(ms) == 0 || ms[0].ID != 1 || ms[0].HLTVURL != want {
-		t.Errorf("GetUpcomingUserMatches: %+v, %v", ms, err)
+	_, upcoming, err := s.GetScheduleMatches(1, 0)
+	if err != nil || len(upcoming) == 0 || upcoming[0].ID != 1 || upcoming[0].HLTVURL != want {
+		t.Errorf("GetScheduleMatches: %+v, %v", upcoming, err)
 	}
-	fromUnix, toUnix := now.Unix(), now.Add(24*time.Hour).Unix()
-	if ms, err := s.GetDigestMatches(1, fromUnix, toUnix); err != nil || len(ms) == 0 || ms[0].HLTVURL != want {
-		t.Errorf("GetDigestMatches: %+v, %v", ms, err)
+	_, windowed, err := s.GetScheduleMatches(1, now.Add(24*time.Hour).Unix())
+	if err != nil || len(windowed) == 0 || windowed[0].HLTVURL != want {
+		t.Errorf("GetScheduleMatches with until: %+v, %v", windowed, err)
 	}
 
 	// Обновление матча без смены команд ссылку не трогает, смена соперника сбрасывает.
@@ -331,6 +335,54 @@ func TestHLTVColumns(t *testing.T) {
 	put(1, "G2", "FaZe", now.Add(2*time.Hour))
 	if urls, _ = s.GetHLTVURLs([]int{1}); urls[1] != "" {
 		t.Error("ссылка должна сбрасываться при смене соперника")
+	}
+}
+
+func TestGetScheduleMatchesUntil(t *testing.T) {
+	s := openTestStorage(t)
+	now := time.Now()
+	if err := s.Subscribe(1, 1, "G2"); err != nil {
+		t.Fatal(err)
+	}
+	put := func(id int, status string, beginAt time.Time) {
+		_, _, _, _, _, _, _, _, err := s.ProcessMatch(domain.Match{
+			ID: id, TeamA: "G2", TeamB: "NAVI", TeamAID: 1, TeamBID: 2,
+			Time: beginAt, Status: status,
+			Tournament: "EPL", TournamentID: 7,
+			TournamentBeginAt: now.Add(-24 * time.Hour),
+			NumberOfGames:    3,
+		})
+		if err != nil {
+			t.Fatalf("ProcessMatch(%d): %v", id, err)
+		}
+	}
+	put(1, "running", now.Add(-time.Hour))
+	put(2, "not_started", now.Add(2*time.Hour))
+	put(3, "not_started", now.Add(48*time.Hour))
+
+	live, upcoming, err := s.GetScheduleMatches(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(live) != 1 || live[0].ID != 1 {
+		t.Fatalf("live без until: %+v", live)
+	}
+	if len(upcoming) != 2 {
+		t.Fatalf("upcoming без until: %+v", upcoming)
+	}
+
+	live, upcoming, err = s.GetScheduleMatches(1, now.Add(24*time.Hour).Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(live) != 1 || live[0].ID != 1 {
+		t.Fatalf("live с until должен остаться: %+v", live)
+	}
+	if len(upcoming) != 1 || upcoming[0].ID != 2 {
+		t.Fatalf("upcoming с until: %+v, want только матч 2", upcoming)
+	}
+	if upcoming[0].Tournament != "EPL" || upcoming[0].NumberOfGames != 3 {
+		t.Errorf("поля турнира/BO: Tournament=%q NumberOfGames=%d", upcoming[0].Tournament, upcoming[0].NumberOfGames)
 	}
 }
 

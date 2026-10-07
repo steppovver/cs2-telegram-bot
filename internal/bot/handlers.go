@@ -112,78 +112,17 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 		return c.Send("Вы еще не подписаны ни на одну команду.\nНажмите «🔔 Подписки на команды».", telebot.NoPreview)
 	}
 
-	// Загружаем live-матчи из БД
-	liveMatches, err := b.storage.GetLiveUserMatches(userID)
+	live, upcoming, err := b.storage.GetScheduleMatches(userID, 0)
 	if err != nil {
-		slog.Error("Ошибка получения live-матчей", slog.Int64("user_id", userID), slog.Any("error", err))
-	}
-
-	// Загружаем предстоящие матчи из БД
-	matches, err := b.storage.GetUpcomingUserMatches(userID)
-	if err != nil {
+		slog.Error("Ошибка получения расписания", slog.Int64("user_id", userID), slog.Any("error", err))
 		return c.Send("Ошибка получения расписания.", telebot.NoPreview)
 	}
 
-	if len(liveMatches) == 0 && len(matches) == 0 {
+	if len(live) == 0 && len(upcoming) == 0 {
 		return c.Send("Для ваших команд в ближайшее время игр не найдено.", telebot.NoPreview)
 	}
-	var sb strings.Builder
 
-	// Сначала live-матчи (стримы уже в БД, API не дергаем)
-	if len(liveMatches) > 0 {
-		sb.WriteString("🔴 <b>Сейчас играют:</b>\n\n")
-		for i, match := range liveMatches {
-			teamA, teamB := html.EscapeString(match.TeamA), html.EscapeString(match.TeamB)
-			for _, sub := range subs {
-				if sub.ID == match.TeamAID {
-					teamA = "<b>" + teamA + "</b>"
-				}
-				if sub.ID == match.TeamBID {
-					teamB = "<b>" + teamB + "</b>"
-				}
-			}
-			if i > 0 {
-				sb.WriteString("➖➖➖➖➖➖➖\n")
-			}
-			card := fmt.Sprintf("🎮 %s vs %s%s\n", teamA, teamB, boSuffix(match))
-			if line := tournamentLine(match); line != "" {
-				card += line + "\n"
-			}
-			sb.WriteString(card + fmt.Sprintf("%s\n", streamLine(match, b.maxStreams)))
-			if line := hltvMatchLine(match); line != "" {
-				sb.WriteString(line + "\n")
-			}
-		}
-		sb.WriteString("\n")
-	}
-
-	// Все предстоящие — одним списком, сгруппированным по турнирам.
-	// Группы идут по старту турнира, матчи внутри — по времени начала.
-	if len(matches) > 0 {
-		sb.WriteString("📅 <b>Матчи:</b>\n\n")
-		for gi, group := range groupMatchesByTournament(matches) {
-			if gi > 0 {
-				sb.WriteString("➖➖➖➖➖➖➖\n")
-			}
-			sb.WriteString(tournamentHeader(group) + "\n")
-			for _, match := range group.Matches {
-				timeStr := formatTGTime(match.Time, "dt", "02.01 15:04", utcOffset)
-				teamA, teamB := html.EscapeString(match.TeamA), html.EscapeString(match.TeamB)
-				for _, sub := range subs {
-					if sub.ID == match.TeamAID {
-						teamA = "<b>" + teamA + "</b>"
-					}
-					if sub.ID == match.TeamBID {
-						teamB = "<b>" + teamB + "</b>"
-					}
-				}
-				sb.WriteString(fmt.Sprintf("%s | %s vs %s%s\n", timeStr, teamA, teamB, boSuffix(match)))
-			}
-		}
-		sb.WriteString("\n")
-	}
-
-	return b.sendChunked(c, sb.String())
+	return b.sendChunked(c, formatMatchesMessage("", live, upcoming, subs, utcOffset, b.maxStreams))
 }
 
 func (b *Bot) handleTextSearch(c telebot.Context) error {

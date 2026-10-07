@@ -355,57 +355,27 @@ func sameTeamPair(a1, b1, a2, b2 string) bool {
 	return (a1 == a2 && b1 == b2) || (a1 == b2 && b1 == a2)
 }
 
-func (s *Storage) GetUpcomingUserMatches(userID int64) ([]domain.Match, error) {
-	rows, err := s.db.Query(`
-		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.score_json, '[]'), m.tournament_id, COALESCE(t.name, ''), COALESCE(t.begin_at, 0), m.hltv_url
-		FROM matches m
-		LEFT JOIN tournaments t ON t.id = m.tournament_id
-		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
-		WHERE s.user_id = ? AND m.begin_at > ?
-		ORDER BY m.begin_at ASC
-	`, userID, time.Now().Unix())
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var matches []domain.Match
-	for rows.Next() {
-		var m domain.Match
-		var unixTime int64
-		var teamAID, teamBID sql.NullInt64
-		var status string
-		var scoreRaw, tournamentName sql.NullString
-		var tournamentBegin int64
-		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status, &scoreRaw, &m.TournamentID, &tournamentName, &tournamentBegin, &m.HLTVURL); err != nil {
-			continue
-		}
-		m.Time = time.Unix(unixTime, 0)
-		m.TeamAID = int(teamAID.Int64)
-		m.TeamBID = int(teamBID.Int64)
-		m.Status = status
-		decodeScore(scoreRaw, &m)
-		fillTournament(&m, tournamentName, tournamentBegin)
-		matches = append(matches, m)
-	}
-	return matches, rows.Err()
-}
-
-func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
+// GetScheduleMatches возвращает live и предстоящие матчи пользователя одним запросом.
+// untilUnix — правая граница для upcoming (begin_at <= untilUnix); 0 = без границы.
+// Live (status=running) в окно не режется.
+func (s *Storage) GetScheduleMatches(userID int64, untilUnix int64) (live, upcoming []domain.Match, err error) {
+	nowUnix := time.Now().Unix()
 	rows, err := s.db.Query(`
 		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.streams_json, '[]'), COALESCE(m.score_json, '[]'), m.tournament_id, COALESCE(t.name, ''), COALESCE(t.begin_at, 0), m.hltv_url
 		FROM matches m
 		LEFT JOIN tournaments t ON t.id = m.tournament_id
 		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
-		WHERE s.user_id = ? AND m.begin_at <= ? AND m.status = 'running'
+		WHERE s.user_id = ? AND (
+			(m.begin_at <= ? AND m.status = 'running')
+			OR (m.begin_at > ? AND (? = 0 OR m.begin_at <= ?))
+		)
 		ORDER BY m.begin_at ASC
-	`, userID, time.Now().Unix())
+	`, userID, nowUnix, nowUnix, untilUnix, untilUnix)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 
-	var matches []domain.Match
 	for rows.Next() {
 		var m domain.Match
 		var unixTime int64
@@ -423,9 +393,13 @@ func (s *Storage) GetLiveUserMatches(userID int64) ([]domain.Match, error) {
 		m.Streams = decodeStreams(streamsRaw)
 		decodeScore(scoreRaw, &m)
 		fillTournament(&m, tournamentName, tournamentBegin)
-		matches = append(matches, m)
+		if m.Status == "running" && unixTime <= nowUnix {
+			live = append(live, m)
+		} else {
+			upcoming = append(upcoming, m)
+		}
 	}
-	return matches, rows.Err()
+	return live, upcoming, rows.Err()
 }
 
 // GetScoreMatches возвращает матчи со счетом для кнопки 📊: идущие сейчас
@@ -1047,37 +1021,6 @@ func (s *Storage) GetDigestDueUsers(hourUTC int, slot string) ([]domain.DigestDu
 func (s *Storage) MarkDigestSent(userID int64, date string) error {
 	_, err := s.db.Exec(`UPDATE user_digest SET last_sent_date = ? WHERE user_id = ?`, date, userID)
 	return err
-}
-
-func (s *Storage) GetDigestMatches(userID int64, fromUnix, toUnix int64) ([]domain.Match, error) {
-	rows, err := s.db.Query(`
-		SELECT DISTINCT m.id, m.team_a, m.team_b, m.begin_at, m.team_a_id, m.team_b_id, COALESCE(m.status, ''), m.hltv_url
-		FROM matches m
-		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
-		WHERE s.user_id = ? AND m.begin_at > ? AND m.begin_at <= ?
-		ORDER BY m.begin_at ASC
-	`, userID, fromUnix, toUnix)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var matches []domain.Match
-	for rows.Next() {
-		var m domain.Match
-		var unixTime int64
-		var teamAID, teamBID sql.NullInt64
-		var status string
-		if err := rows.Scan(&m.ID, &m.TeamA, &m.TeamB, &unixTime, &teamAID, &teamBID, &status, &m.HLTVURL); err != nil {
-			continue
-		}
-		m.Time = time.Unix(unixTime, 0)
-		m.TeamAID = int(teamAID.Int64)
-		m.TeamBID = int(teamBID.Int64)
-		m.Status = status
-		matches = append(matches, m)
-	}
-	return matches, rows.Err()
 }
 
 func (s *Storage) Close() error {

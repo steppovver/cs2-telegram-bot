@@ -2,13 +2,8 @@ package bot
 
 import (
 	"context"
-	"fmt"
-	"html"
 	"log/slog"
-	"strings"
 	"time"
-
-	"cs2bot/internal/domain"
 )
 
 func (b *Bot) StartDailyDigest(ctx context.Context) {
@@ -53,7 +48,7 @@ func (b *Bot) runDigestCycle(ctx context.Context) {
 			return
 		default:
 		}
-		if b.processDigestUser(ctx, u.UserID, u.UtcOffset, time.Now(), until, slot) {
+		if b.processDigestUser(ctx, u.UserID, u.UtcOffset, until, slot) {
 			sent++
 		} else {
 			empty++
@@ -68,27 +63,29 @@ func (b *Bot) runDigestCycle(ctx context.Context) {
 // processDigestUser готовит и ставит в очередь персональный дайджест одного юзера.
 // Пустой результат тоже фиксирует как отправленный, чтобы не дергать БД весь час.
 // Возвращает true, если дайджест с матчами поставлен в очередь.
-func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int, now, until time.Time, slot string) bool {
-	matches, err := b.storage.GetDigestMatches(userID, now.Unix(), until.Unix())
+func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int, until time.Time, slot string) bool {
+	live, upcoming, err := b.storage.GetScheduleMatches(userID, until.Unix())
 	if err != nil {
 		slog.Error("Ошибка получения матчей для дайджеста", slog.Int64("user_id", userID), slog.Any("error", err))
 		return false
 	}
 	slog.Debug("Матчи для дайджеста",
 		slog.Int64("user_id", userID),
-		slog.Int("found", len(matches)))
+		slog.Int("live", len(live)),
+		slog.Int("upcoming", len(upcoming)))
 
-	subs, _ := b.storage.GetUserSubscriptions(userID)
-	lines := buildDigestLines(matches, subs, utcOffset)
-
-	if len(lines) == 0 {
+	if len(live) == 0 && len(upcoming) == 0 {
 		slog.Debug("Дайджест пуст, матчей на 24 часа нет",
 			slog.Int64("user_id", userID))
 		b.markDigestSent(userID, slot)
 		return false
 	}
 
-	text := "⏰ <b>Матчи ваших команд на 24 часа:</b>\n\n" + strings.Join(lines, "\n") + "\n"
+	subs, _ := b.storage.GetUserSubscriptions(userID)
+	text := formatMatchesMessage(
+		"⏰ <b>Дайджест на 24 часа:</b>",
+		live, upcoming, subs, utcOffset, b.maxStreams,
+	)
 	ok, dropped := b.enqueueToUser(ctx, userID, text)
 	if !ok || dropped > 0 {
 		slog.Warn("Дайджест не поставлен в очередь (переполнение), повтор на следующем тике",
@@ -98,32 +95,9 @@ func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int
 	b.markDigestSent(userID, slot)
 	slog.Info("Дайджест поставлен в очередь",
 		slog.Int64("user_id", userID),
-		slog.Int("lines", len(lines)))
+		slog.Int("live", len(live)),
+		slog.Int("upcoming", len(upcoming)))
 	return true
-}
-
-// buildDigestLines фильтрует матчи без соперника/времени и форматирует
-// их одной строкой на матч, подсвечивая команды пользователя.
-// Время приводим в пояс юзера только на рендере, бизнес-логика в UTC.
-func buildDigestLines(matches []domain.Match, subs []domain.TeamInfo, utcOffset int) []string {
-	var lines []string
-	for _, m := range matches {
-		if m.TeamA == "TBD" || m.TeamB == "TBD" || m.Time.IsZero() {
-			continue
-		}
-		timeStr := formatTGTime(m.Time, "dt", "02.01 15:04", utcOffset)
-		teamA, teamB := html.EscapeString(m.TeamA), html.EscapeString(m.TeamB)
-		for _, sub := range subs {
-			if sub.ID == m.TeamAID {
-				teamA = "<b>" + teamA + "</b>"
-			}
-			if sub.ID == m.TeamBID {
-				teamB = "<b>" + teamB + "</b>"
-			}
-		}
-		lines = append(lines, fmt.Sprintf("%s | %s vs %s", timeStr, teamA, teamB))
-	}
-	return lines
 }
 
 func (b *Bot) markDigestSent(userID int64, slot string) {
