@@ -12,6 +12,7 @@ Telegram-бот на Go для отслеживания матчей Counter-Str
 - `cmd/teams_puller/main.go` — утилита синхронизации команд
 - `internal/api/` — клиенты внешних API (PandaScore)
 - `internal/bot/` — обработчики Telegram (handlers, workers: поллер, напоминания, рассылка, дайджест)
+- `internal/hltv/` — поиск и резолв точных ссылок на матчи HLTV
 - `internal/domain/` — доменные модели и интерфейсы
 - `internal/storage/` — слой работы с базой данных (SQLite)
 - `deploy/` — `cs2bot.service`, `backup-sqlite.sh`, `deploy.sh`

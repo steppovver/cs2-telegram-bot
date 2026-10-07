@@ -7,6 +7,7 @@ import (
 
 	"cs2bot/internal/config"
 	"cs2bot/internal/domain"
+	"cs2bot/internal/hltv"
 
 	"gopkg.in/telebot.v3"
 )
@@ -38,9 +39,7 @@ type Storage interface {
 	GetDigestDueUsers(hourUTC int, slot string) ([]domain.DigestDueUser, error)
 	MarkDigestSent(userID int64, date string) error
 	GetDigestMatches(userID int64, fromUnix, toUnix int64) ([]domain.Match, error)
-	SetMatchHLTV(matchID int, url string, checkedAt time.Time) error
 	GetHLTVURLs(matchIDs []int) (map[int]string, error)
-	GetMatchesForHLTVResolve(from, to, retryBefore time.Time) ([]domain.Match, error)
 }
 
 type PandaClient interface {
@@ -95,8 +94,8 @@ type Bot struct {
 
 	admins map[int64]bool
 
-	// hltvSearch — поисковик для резолвера ссылок HLTV; nil = резолвер выключен.
-	hltvSearch SearchProvider
+	// hltvResolver — воркер точных ссылок HLTV; nil = выключен.
+	hltvResolver *hltv.Resolver
 }
 
 func New(b *telebot.Bot, s Storage, p PandaClient, defaultTeams []domain.TeamInfo, digestPresetHours []int, adminIDs []int64, maxStreams int) *Bot {
@@ -131,12 +130,6 @@ func New(b *telebot.Bot, s Storage, p PandaClient, defaultTeams []domain.TeamInf
 	)
 
 	return botApp
-}
-
-// SetHLTVSearch включает резолвер ссылок HLTV. nil = выключен.
-// Вызывать до StartHLTVResolver.
-func (b *Bot) SetHLTVSearch(p SearchProvider) {
-	b.hltvSearch = p
 }
 
 func (b *Bot) RegisterHandlers() {

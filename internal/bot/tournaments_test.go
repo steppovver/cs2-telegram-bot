@@ -72,12 +72,3 @@ func TestTournamentLine(t *testing.T) {
 	}
 }
 
-func TestHltvEventURL(t *testing.T) {
-	got := hltvEventURL("ESL Pro League Season 24 2026")
-	if !strings.HasPrefix(got, "https://www.google.com/search?btnI=1&q=site%3Ahltv.org%2Fevents+ESL+Pro+League") {
-		t.Errorf("event URL = %q", got)
-	}
-	if strings.Contains(got, " ") {
-		t.Errorf("неэскейпленные пробелы: %q", got)
-	}
-}

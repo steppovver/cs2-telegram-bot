@@ -14,6 +14,7 @@ import (
 	"cs2bot/internal/api"
 	"cs2bot/internal/bot"
 	"cs2bot/internal/config"
+	"cs2bot/internal/hltv"
 	"cs2bot/internal/storage"
 
 	"github.com/lmittmann/tint"
@@ -82,12 +83,12 @@ func main() {
 	if !ok {
 		slog.Warn("Неизвестный search_provider, резолвер ссылок HLTV выключен", slog.String("value", cfg.SearchProvider))
 	}
-	hltvSearch, err := bot.NewSearchProvider(searchProvider, cfg.SearchBaseURL)
+	hltvSearch, err := hltv.NewSearchProvider(searchProvider, cfg.SearchBaseURL)
 	if err != nil {
 		slog.Error("Ошибка настройки поиска ссылок HLTV", slog.Any("error", err))
 		os.Exit(1)
 	}
-	botApp.SetHLTVSearch(hltvSearch)
+	botApp.SetHLTVResolver(hltv.NewResolver(db, hltvSearch))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -13,6 +13,7 @@ alwaysApply: true
 - `cmd/teams_puller/main.go` — наполнение справочника команд
 - `internal/api/` — клиент PandaScore (чанки, ретраи, пагинация)
 - `internal/bot/` — хендлеры Telegram, воркеры (поллер, напоминания, рассылка, дайджест)
+- `internal/hltv/` — поиск и резолв точных ссылок на матчи HLTV
 - `internal/domain/` — доменные модели
 - `internal/storage/` — SQLite: схема, миграции, подписки, матчи
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"cs2bot/internal/domain"
+	"cs2bot/internal/hltv"
 )
 
 // tournamentGroup — матчи одного турнира (ключ — serie.id).
@@ -77,11 +78,6 @@ func groupSortKey(g tournamentGroup) time.Time {
 	return time.Time{}
 }
 
-// hltvEventURL строит ссылку на страницу турнира через Google "Мне повезёт".
-func hltvEventURL(tournament string) string {
-	return googleLuckyURL("site:hltv.org/events " + strings.TrimSpace(tournament))
-}
-
 // tournamentHeader — заголовок группы: кликабельное имя турнира.
 // Корзина "Прочие" — plain-текст без ссылки.
 func tournamentHeader(g tournamentGroup) string {
@@ -89,7 +85,7 @@ func tournamentHeader(g tournamentGroup) string {
 		return "🗂 Прочие"
 	}
 	return fmt.Sprintf(`🏆 <a href="%s">%s</a>`,
-		html.EscapeString(hltvEventURL(g.Name)), html.EscapeString(g.Name))
+		html.EscapeString(hltv.EventURL(g.Name)), html.EscapeString(g.Name))
 }
 
 // tournamentLine — строка турнира для карточек со стримами.
@@ -99,5 +95,5 @@ func tournamentLine(m domain.Match) string {
 		return ""
 	}
 	return fmt.Sprintf(`🏟 Турнир: <a href="%s">%s</a>`,
-		html.EscapeString(hltvEventURL(m.Tournament)), html.EscapeString(m.Tournament))
+		html.EscapeString(hltv.EventURL(m.Tournament)), html.EscapeString(m.Tournament))
 }

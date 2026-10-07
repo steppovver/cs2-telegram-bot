@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"cs2bot/internal/domain"
+	"cs2bot/internal/hltv"
 
 	"gopkg.in/telebot.v3"
 )
@@ -117,7 +118,7 @@ func buildScoreBlock(m domain.Match, subs []domain.TeamInfo, utcOffset int, show
 		sb.WriteString(line + "\n")
 	}
 	if m.TeamA != "TBD" && m.TeamB != "TBD" {
-		sb.WriteString(fmt.Sprintf(`HLTV: <a href="%s">Профиль матча</a>`+"\n", html.EscapeString(hltvMatchURL(m))))
+		sb.WriteString(fmt.Sprintf(`HLTV: <a href="%s">Профиль матча</a>`+"\n", html.EscapeString(hltv.MatchURL(m))))
 	}
 	return sb.String()
 }
