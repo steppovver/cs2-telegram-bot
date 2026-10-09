@@ -7,6 +7,22 @@ import (
 	"cs2bot/internal/domain"
 )
 
+// formatMatchCard — общая карточка live / старта / напоминания.
+// teamA/teamB уже готовые HTML-фрагменты (highlight или <b>).
+func formatMatchCard(m domain.Match, teamA, teamB string, utcOffset, maxStreams int) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("🎮 %s vs %s%s\n", teamA, teamB, boSuffix(m)))
+	if line := tournamentLine(m); line != "" {
+		sb.WriteString(line + "\n")
+	}
+	sb.WriteString(fmt.Sprintf("⏰ Время: %s\n", formatTGTime(m.Time, "dt", "15:04 02.01", utcOffset)))
+	sb.WriteString(streamLine(m, maxStreams))
+	if line := hltvMatchLine(m); line != "" {
+		sb.WriteString("\n" + line)
+	}
+	return sb.String()
+}
+
 // formatMatchesMessage собирает текст расписания/дайджеста.
 // header — опциональная шапка (у дайджеста); тело одинаковое: live, затем upcoming.
 func formatMatchesMessage(header string, live, upcoming []domain.Match, subs []domain.TeamInfo, utcOffset, maxStreams int) string {
@@ -24,14 +40,8 @@ func formatMatchesMessage(header string, live, upcoming []domain.Match, subs []d
 			if i > 0 {
 				sb.WriteString("➖➖➖➖➖➖➖\n")
 			}
-			card := fmt.Sprintf("🎮 %s vs %s%s\n", teamA, teamB, boSuffix(match))
-			if line := tournamentLine(match); line != "" {
-				card += line + "\n"
-			}
-			sb.WriteString(card + fmt.Sprintf("%s\n", streamLine(match, maxStreams)))
-			if line := hltvMatchLine(match); line != "" {
-				sb.WriteString(line + "\n")
-			}
+			sb.WriteString(formatMatchCard(match, teamA, teamB, utcOffset, maxStreams))
+			sb.WriteString("\n")
 		}
 		sb.WriteString("\n")
 	}
