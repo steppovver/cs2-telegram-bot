@@ -130,8 +130,9 @@ func isDigits(s string) bool {
 	return s != ""
 }
 
-// eventMatchesTournament: хотя бы половина значимых слов турнира есть в
-// названии события из slug. Защита от страницы старого матча тех же команд.
+// eventMatchesTournament: числовые токены турнира (номера сезонов и т.п.)
+// должны совпадать точно; хотя бы половина текстовых токенов должна быть в slug.
+// Защита от страницы старого матча тех же команд на другом сезоне.
 // Нет названия турнира — требований нет.
 func eventMatchesTournament(event []string, tournament string) bool {
 	sig := tournamentTokens(tournament)
@@ -142,13 +143,21 @@ func eventMatchesTournament(event []string, tournament string) bool {
 	for _, t := range event {
 		have[t] = true
 	}
-	hit := 0
+	textHit, textTotal := 0, 0
 	for _, t := range sig {
-		if have[t] {
-			hit++
+		if isDigits(t) {
+			// Номера сезонов и т.п.: точное совпадение обязательно.
+			if !have[t] {
+				return false
+			}
+		} else {
+			textTotal++
+			if have[t] {
+				textHit++
+			}
 		}
 	}
-	return hit*2 >= len(sig)
+	return textTotal == 0 || textHit*2 >= textTotal
 }
 
 // ValidateMatchURL проверяет, что кандидат — страница именно этого матча

@@ -72,6 +72,11 @@ func TestValidateMatchURL(t *testing.T) {
 			m:    domain.Match{TeamA: "MOUZ", TeamB: "G2"},
 			url:  "https://www.hltv.org/matches/2380003/mouz-nxt-vs-g2-esl-challenger",
 		},
+		{
+			name: "матч тех же команд, но другой сезон того же турнира",
+			m:    domain.Match{TeamA: "MOUZ", TeamB: "Spirit", Tournament: "ESL Pro League Season 24 2026"},
+			url:  "https://www.hltv.org/matches/2380077/spirit-vs-mouz-esl-pro-league-season-21",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
