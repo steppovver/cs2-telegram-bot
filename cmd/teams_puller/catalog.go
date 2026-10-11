@@ -38,7 +38,7 @@ func fetchTeams(ctx context.Context, client *http.Client, token string) ([]panda
 			return nil, fmt.Errorf("страница %d: %w", page, err)
 		}
 		if len(batch) == 0 {
-			fmt.Printf("Вернулся пустой ответ - все команды загружены")
+			fmt.Printf("Вернулся пустой ответ - все команды загружены\n")
 			return all, nil
 		}
 		all = append(all, batch...)
