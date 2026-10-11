@@ -113,7 +113,7 @@ func (q matchesQuery) url(page int) string {
 func (c *Client) FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string) ([]domain.Match, error) {
 	return c.queryMatches(ctx, matchesQuery{
 		OpponentIDs: teamIDs,
-		Statuses:    []string{"not_started", "running"},
+		Statuses:    []string{"not_started", "running", "postponed"},
 		Sort:        "begin_at",
 	})
 }

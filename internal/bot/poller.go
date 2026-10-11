@@ -52,6 +52,27 @@ type matchEvent struct {
 	oldTeamB    string
 }
 
+// classifyMatchUpdate решает, какое уведомление слать по изменению матча.
+// postponed не даёт «новый матч»: иначе связка с CleanOldMatches повторяет
+// рассылку каждую минуту. Смена времени или соперника уходит как обычно.
+// ok=false — событие для рассылки не нужно.
+func classifyMatchUpdate(isNew, timeChanged, teamsChanged, statusChanged bool, status, oldStatus string) (matchEventKind, bool) {
+	switch {
+	case isNew && status == "postponed":
+		return 0, false
+	case isNew:
+		return eventNew, true
+	case status == "running" && statusChanged && oldStatus != "running":
+		return eventStarted, true
+	case teamsChanged:
+		return eventOpponent, true
+	case timeChanged:
+		return eventTimeChanged, true
+	default:
+		return 0, false
+	}
+}
+
 func (b *Bot) runPollerCycle(ctx context.Context) {
 	slog.Debug("Запуск цикла обновления матчей")
 
@@ -97,20 +118,18 @@ func (b *Bot) runPollerCycle(ctx context.Context) {
 			continue
 		}
 
-		ev := matchEvent{match: match, timeChanged: timeChanged, oldTime: oldTime, oldTeamA: oldTeamA, oldTeamB: oldTeamB}
-		switch {
-		case isNew:
-			ev.kind = eventNew
-		case match.Status == "running" && statusChanged && oldStatus != "running":
-			ev.kind = eventStarted
-		case teamsChanged:
-			ev.kind = eventOpponent
-		case timeChanged:
-			ev.kind = eventTimeChanged
-		default:
+		kind, ok := classifyMatchUpdate(isNew, timeChanged, teamsChanged, statusChanged, match.Status, oldStatus)
+		if !ok {
 			continue
 		}
-		events = append(events, ev)
+		events = append(events, matchEvent{
+			match:       match,
+			kind:        kind,
+			timeChanged: timeChanged,
+			oldTime:     oldTime,
+			oldTeamA:    oldTeamA,
+			oldTeamB:    oldTeamB,
+		})
 	}
 
 	if len(events) > 0 {

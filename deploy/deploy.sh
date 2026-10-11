@@ -71,3 +71,21 @@ else
   echo "Юнит без изменений, пропускаем."
 fi
 $SSH "systemctl restart cs2bot && systemctl is-active cs2bot"
+
+# Timer справочника команд: юниты по checksum, enable каждый деплой.
+PULLER_CHANGED=0
+for unit in cs2bot-teams-puller.service cs2bot-teams-puller.timer; do
+  LOCAL_SUM="$(sha256sum "deploy/$unit" | cut -d' ' -f1)"
+  REMOTE_SUM="$($SSH "sha256sum /etc/systemd/system/$unit 2>/dev/null | cut -d' ' -f1" || true)"
+  if [ "$LOCAL_SUM" != "$REMOTE_SUM" ]; then
+    echo "$unit изменился, обновляем..."
+    $SCP "deploy/$unit" "$DEPLOY_USER@$DEPLOY_HOST:/etc/systemd/system/$unit"
+    PULLER_CHANGED=1
+  else
+    echo "$unit без изменений, пропускаем."
+  fi
+done
+if [ "$PULLER_CHANGED" = 1 ]; then
+  $SSH "systemctl daemon-reload"
+fi
+$SSH "systemctl enable --now cs2bot-teams-puller.timer"

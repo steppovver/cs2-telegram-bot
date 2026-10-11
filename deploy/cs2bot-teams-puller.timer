@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily CS2 teams catalog sync
+
+[Timer]
+OnCalendar=*-*-* 05:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
