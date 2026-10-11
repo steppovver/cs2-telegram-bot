@@ -33,12 +33,17 @@ func youtubeSearchURL(teamA, teamB string) string {
 	return "https://www.youtube.com/results?search_query=" + url.QueryEscape(teamA+" vs "+teamB+" cs2 live")
 }
 
-// streamLinkText возвращает подпись ссылки: "канал (Платформа)" для
-// Twitch/Kick, где канал извлекается из пути URL. Для YouTube и прочих —
-// просто платформа (в watch-ссылке имени канала нет).
-func streamLinkText(rawURL string) string {
-	platform := streamLabel(rawURL)
-	if channel := streamChannel(rawURL); channel != "" {
+// streamLinkText возвращает подпись ссылки: "канал (Платформа)".
+// Twitch/Kick — канал из пути URL; YouTube — из кеша stream_channels
+// (поле Channel, заполняется фоновым oEmbed-резолвером). Без имени —
+// просто платформа.
+func streamLinkText(s domain.MatchStream) string {
+	platform := streamLabel(s.URL)
+	channel := streamChannel(s.URL)
+	if channel == "" {
+		channel = truncateChannel(s.Channel)
+	}
+	if channel != "" {
 		return channel + " (" + platform + ")"
 	}
 	return platform
@@ -91,6 +96,120 @@ func truncateChannel(s string) string {
 	return s
 }
 
+// channelNoiseSuffixes — хвосты, которые снимаем при сравнении хендла
+// Twitch/Kick с отображаемым именем YouTube (длинные первыми).
+var channelNoiseSuffixes = []string{
+	"counterstrike", "csgo", "cs2", "esports", "gaming",
+	"official", "tv", "live", "channel", "cs",
+}
+
+// normalizeChannelName оставляет только [a-z0-9] в нижнем регистре.
+func normalizeChannelName(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// channelBaseForm снимает суффикс параллельного стрима (a–d) и шумовые хвосты.
+func channelBaseForm(norm string) string {
+	if len(norm) >= 5 {
+		last := norm[len(norm)-1]
+		if last >= 'a' && last <= 'd' {
+			norm = norm[:len(norm)-1]
+		}
+	}
+	for {
+		stripped := false
+		for _, suf := range channelNoiseSuffixes {
+			if len(norm) > len(suf) && strings.HasSuffix(norm, suf) {
+				norm = strings.TrimSuffix(norm, suf)
+				stripped = true
+				break
+			}
+		}
+		if !stripped {
+			break
+		}
+	}
+	return norm
+}
+
+func channelNamesOverlap(a, b string) bool {
+	if len(a) < 3 || len(b) < 3 {
+		return false
+	}
+	return a == b || strings.Contains(a, b) || strings.Contains(b, a)
+}
+
+// channelsRelated — похожи ли имена каналов (Twitch ESLCS / ESLCSA и
+// YouTube «ESL Counter-Strike»). Пустые и слишком короткие — false.
+func channelsRelated(a, b string) bool {
+	na, nb := normalizeChannelName(a), normalizeChannelName(b)
+	if !channelNamesOverlap(na, nb) {
+		ba, bb := channelBaseForm(na), channelBaseForm(nb)
+		return channelNamesOverlap(ba, bb)
+	}
+	return true
+}
+
+// displayChannel — имя канала для сравнения: из URL (Twitch/Kick) или Channel.
+func displayChannel(s domain.MatchStream) string {
+	if ch := streamChannel(s.URL); ch != "" {
+		return ch
+	}
+	return strings.TrimSpace(s.Channel)
+}
+
+// promoteRelatedYouTube поднимает неофициальные YouTube в official, если
+// имя канала похоже на официальный Twitch/Kick. Если YouTube уже есть среди
+// official — ничего не меняет.
+func promoteRelatedYouTube(official, rest []domain.MatchStream) (outOfficial, outRest []domain.MatchStream) {
+	for _, s := range official {
+		if streamLabel(s.URL) == "YouTube" {
+			return official, rest
+		}
+	}
+	var officialNames []string
+	for _, s := range official {
+		if ch := displayChannel(s); ch != "" {
+			officialNames = append(officialNames, ch)
+		}
+	}
+	if len(officialNames) == 0 {
+		return official, rest
+	}
+
+	outOfficial = append(outOfficial, official...)
+	for _, s := range rest {
+		if streamLabel(s.URL) != "YouTube" || strings.TrimSpace(s.Channel) == "" {
+			outRest = append(outRest, s)
+			continue
+		}
+		related := false
+		for _, name := range officialNames {
+			if channelsRelated(name, s.Channel) {
+				related = true
+				break
+			}
+		}
+		if related {
+			outOfficial = append(outOfficial, s)
+		} else {
+			outRest = append(outRest, s)
+		}
+	}
+	return outOfficial, outRest
+}
+
 func fallbackLine(m domain.Match) string {
 	return fmt.Sprintf(`🔍 Найти трансляцию: <a href="%s">Twitch</a> | <a href="%s">YouTube</a>`,
 		html.EscapeString(twitchSearchURL(m.TeamA, m.TeamB)),
@@ -98,7 +217,8 @@ func fallbackLine(m domain.Match) string {
 }
 
 // streamLines возвращает строки трансляций:
-//   - "⭐ Официальная трансляция: ..." — все стримы с official=true (без лимита);
+//   - "⭐ Официальная трансляция: ..." — official=true плюс похожие YouTube
+//     (если среди official ещё нет YouTube);
 //   - "📺 Смотреть: ..." — остальные, с лимитом (limit: 0 = все неофициальные);
 //   - "🔍 Найти трансляцию: ..." — fallback на поиск, всегда последней строкой.
 //
@@ -117,12 +237,13 @@ func streamLines(m domain.Match, limit int) []string {
 			rest = append(rest, s)
 		}
 	}
+	official, rest = promoteRelatedYouTube(official, rest)
 	var lines []string
 	if len(official) > 0 {
 		links := make([]string, 0, len(official))
 		for _, s := range official {
 			links = append(links, fmt.Sprintf(`<a href="%s">%s</a>`,
-				html.EscapeString(s.URL), html.EscapeString(streamLinkText(s.URL))))
+				html.EscapeString(s.URL), html.EscapeString(streamLinkText(s))))
 		}
 		lines = append(lines, "⭐ Официальная трансляция: "+strings.Join(links, " | "))
 	}
@@ -130,7 +251,7 @@ func streamLines(m domain.Match, limit int) []string {
 	links := make([]string, 0, len(rest))
 	for _, s := range rest {
 		links = append(links, fmt.Sprintf(`<a href="%s">%s</a>`,
-			html.EscapeString(s.URL), html.EscapeString(streamLinkText(s.URL))))
+			html.EscapeString(s.URL), html.EscapeString(streamLinkText(s))))
 		shown++
 		if limit > 0 && shown >= limit {
 			break

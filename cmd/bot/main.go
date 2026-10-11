@@ -16,6 +16,7 @@ import (
 	"cs2bot/internal/config"
 	"cs2bot/internal/hltv"
 	"cs2bot/internal/storage"
+	"cs2bot/internal/youtube"
 
 	"github.com/lmittmann/tint"
 	"gopkg.in/telebot.v3"
@@ -89,6 +90,7 @@ func main() {
 		os.Exit(1)
 	}
 	botApp.SetHLTVResolver(hltv.NewResolver(db, hltvSearch))
+	botApp.SetYouTubeResolver(youtube.NewResolver(db, nil))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -115,6 +117,13 @@ func main() {
 	go func() {
 		defer wg.Done()
 		botApp.StartHLTVResolver(ctx)
+	}()
+
+	// Запускаем воркер резолва имен YouTube-каналов (oEmbed)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		botApp.StartYouTubeResolver(ctx)
 	}()
 
 	// Запускаем воркер напоминаний о матчах

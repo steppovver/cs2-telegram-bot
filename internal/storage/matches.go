@@ -264,18 +264,26 @@ func (s *Storage) GetScheduleMatches(userID int64, untilUnix int64) (live, upcom
 	}
 	defer rows.Close()
 
+	var matches []domain.Match
 	for rows.Next() {
 		m, err := scanMatchRow(rows)
 		if err != nil {
 			continue
 		}
+		matches = append(matches, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	s.FillStreamChannels(matches)
+	for _, m := range matches {
 		if m.Status == "running" && m.Time.Unix() <= nowUnix {
 			live = append(live, m)
 		} else {
 			upcoming = append(upcoming, m)
 		}
 	}
-	return live, upcoming, rows.Err()
+	return live, upcoming, nil
 }
 
 // GetScoreMatches возвращает матчи со счетом для кнопки 📊: идущие сейчас
@@ -510,7 +518,11 @@ func (s *Storage) GetMatchesForReminder() ([]domain.Match, error) {
 		}
 		matches = append(matches, m)
 	}
-	return matches, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	s.FillStreamChannels(matches)
+	return matches, nil
 }
 
 func (s *Storage) MarkMatchAsNotified(matchID int) error {

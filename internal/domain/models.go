@@ -64,11 +64,13 @@ type MatchGame struct {
 // MatchStream — одна трансляция матча из PandaScore (streams_list).
 // URL — прямая ссылка (raw_url, fallback на embed_url).
 // JSON-теги в нижнем регистре — так строка выглядит в колонке streams_json.
+// Channel — имя канала YouTube из кеша stream_channels (не сериализуется в JSON).
 type MatchStream struct {
 	URL      string `json:"url"`
 	Language string `json:"language"`
 	Official bool   `json:"official"`
 	Main     bool   `json:"main"`
+	Channel  string `json:"-"`
 }
 
 type TeamInfo struct {

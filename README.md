@@ -185,7 +185,9 @@ cmd/bot            точка входа бота
 cmd/teams_puller   наполнение справочника команд
 internal/bot       хендлеры, воркеры (поллер, напоминания, рассылка, дайджест), админка
 internal/api       клиент PandaScore (чанки, ретраи, пагинация)
-internal/storage   SQLite: схема, миграции, подписки, матчи, дайджесты
+internal/hltv      поиск и резолв точных ссылок на матчи HLTV
+internal/youtube   oEmbed: резолв имен YouTube-каналов для подписей стримов
+internal/storage   SQLite: схема, миграции, подписки, матчи, дайджесты, кеш stream_channels
 internal/config    загрузка и нормализация config.json
 internal/domain    доменные модели
 deploy/            cs2bot.service, backup-sqlite.sh, deploy.sh
@@ -196,6 +198,11 @@ deploy/            cs2bot.service, backup-sqlite.sh, deploy.sh
 - Воркеры: опрос API каждую минуту, напоминания каждую минуту (окно 5 минут),
   дайджест каждую минуту, рассылка через очередь (лимит ~25 msg/sec,
   чистка заблокировавших бота, пауза по FloodWait).
+- Резолвер HLTV — точные ссылки на страницы матчей (за 12 часов до старта,
+  провайдер из `search_provider`).
+- Резолвер YouTube — имена каналов через oEmbed каждые 5 минут
+  (окно `[-6h, +48h]`), результат в `stream_channels`; расписание, напоминания,
+  дайджест и события поллера читают только кеш БД.
 
 ## Поддержка
 
