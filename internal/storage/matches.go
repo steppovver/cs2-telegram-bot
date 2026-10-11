@@ -140,10 +140,10 @@ func scanMatchRow(rows *sql.Rows) (domain.Match, error) {
 	return m, nil
 }
 
-func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, teamsChanged bool, statusChanged bool, oldTime time.Time, oldTeamA string, oldTeamB string, oldStatus string, err error) {
+func (s *Storage) ProcessMatch(m domain.Match) (domain.MatchChange, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return false, false, false, false, time.Time{}, "", "", "", err
+		return domain.MatchChange{}, err
 	}
 	defer tx.Rollback()
 
@@ -154,7 +154,7 @@ func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, te
 		if _, err := tx.Exec(`INSERT INTO tournaments (id, name, begin_at, updated_at) VALUES (?, ?, ?, ?)
 			ON CONFLICT(id) DO UPDATE SET name = excluded.name, begin_at = excluded.begin_at, updated_at = excluded.updated_at`,
 			m.TournamentID, m.Tournament, endAtUnix(m.TournamentBeginAt), time.Now().Unix()); err != nil {
-			return false, false, false, false, time.Time{}, "", "", "", err
+			return domain.MatchChange{}, err
 		}
 	}
 
@@ -177,39 +177,45 @@ func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, te
 			m.ID, m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Time.Unix(), endAtUnix(m.EndAt), m.Status, encodeStreams(m.Streams), encodeScore(m), m.TournamentID,
 		)
 		if err != nil {
-			return false, false, false, false, time.Time{}, "", "", "", err
+			return domain.MatchChange{}, err
 		}
 		if err := tx.Commit(); err != nil {
-			return false, false, false, false, time.Time{}, "", "", "", err
+			return domain.MatchChange{}, err
 		}
-		return true, false, false, false, time.Time{}, "", "", "", nil
+		return domain.MatchChange{IsNew: true}, nil
 	} else if err != nil {
-		return false, false, false, false, time.Time{}, "", "", "", err
+		return domain.MatchChange{}, err
 	}
 
-	timeChanged = dbTimeUnix != m.Time.Unix()
-	teamsChanged = !sameTeamPair(dbTeamA, dbTeamB, m.TeamA, m.TeamB)
-	statusChanged = dbStatus != m.Status
+	change := domain.MatchChange{
+		TimeChanged:   dbTimeUnix != m.Time.Unix(),
+		TeamsChanged:  !sameTeamPair(dbTeamA, dbTeamB, m.TeamA, m.TeamB),
+		StatusChanged: dbStatus != m.Status,
+		OldTime:       time.Unix(dbTimeUnix, 0),
+		OldTeamA:      dbTeamA,
+		OldTeamB:      dbTeamB,
+		OldStatus:     dbStatus,
+	}
 
 	slog.Debug("ProcessMatch update",
 		slog.Int("match_id", m.ID),
 		slog.String("teams", fmt.Sprintf("%s vs %s", m.TeamA, m.TeamB)),
-		slog.Bool("time_changed", timeChanged),
-		slog.Bool("teams_changed", teamsChanged),
-		slog.Bool("status_changed", statusChanged),
+		slog.Bool("time_changed", change.TimeChanged),
+		slog.Bool("teams_changed", change.TeamsChanged),
+		slog.Bool("status_changed", change.StatusChanged),
 	)
 
 	// Сдвиг времени перевооружает напоминание "за 5 минут": иначе после
 	// уже отправленного напоминания повторное не придет никогда.
 	newNotified := dbNotified
-	if timeChanged {
+	if change.TimeChanged {
 		newNotified = 0
 	}
 
 	// Смена соперника делает найденную страницу HLTV неверной: сбрасываем
 	// ссылку, резолвер найдет ее заново для новой пары.
 	resetHLTV := 0
-	if teamsChanged {
+	if change.TeamsChanged {
 		resetHLTV = 1
 	}
 
@@ -222,13 +228,13 @@ func (s *Storage) ProcessMatch(m domain.Match) (isNew bool, timeChanged bool, te
 		resetHLTV, resetHLTV, m.ID,
 	)
 	if err != nil {
-		return false, false, false, false, time.Time{}, "", "", "", err
+		return domain.MatchChange{}, err
 	}
 
 	if err := tx.Commit(); err != nil {
-		return false, false, false, false, time.Time{}, "", "", "", err
+		return domain.MatchChange{}, err
 	}
-	return false, timeChanged, teamsChanged, statusChanged, time.Unix(dbTimeUnix, 0), dbTeamA, dbTeamB, dbStatus, nil
+	return change, nil
 }
 
 // sameTeamPair сравнивает пары команд без учета порядка: API не гарантирует

@@ -22,7 +22,7 @@ func TestAttachHLTV(t *testing.T) {
 		{ID: 1, TeamA: "G2", TeamB: "NAVI", TeamAID: 1, TeamBID: 2, Time: now.Add(time.Hour), Status: "not_started"},
 		{ID: 2, TeamA: "A", TeamB: "B", TeamAID: 3, TeamBID: 4, Time: now.Add(2 * time.Hour), Status: "not_started"},
 	} {
-		if _, _, _, _, _, _, _, _, err := st.ProcessMatch(m); err != nil {
+		if _, err := st.ProcessMatch(m); err != nil {
 			t.Fatalf("ProcessMatch(%d): %v", m.ID, err)
 		}
 	}

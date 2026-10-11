@@ -19,7 +19,7 @@ type Storage interface {
 	GetScoreMatches(userID int64) ([]domain.Match, error)
 	GetMatchesForReminder() ([]domain.Match, error)
 	GetUsersByTeamIDs(teamAID, teamBID int) ([]int64, error)
-	ProcessMatch(m domain.Match) (isNew, timeChanged, teamsChanged, statusChanged bool, oldTime time.Time, oldTeamA, oldTeamB, oldStatus string, err error)
+	ProcessMatch(m domain.Match) (domain.MatchChange, error)
 	MarkMatchAsNotified(matchID int) error
 	CleanOldMatches()
 	CleanStaleRunningMatches(apiMatchIDs map[int]bool)

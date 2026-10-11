@@ -98,4 +98,3 @@ func TestTournamentLine(t *testing.T) {
 		t.Errorf("line без турнира = %q", got)
 	}
 }
-

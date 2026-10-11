@@ -2,6 +2,24 @@ package domain
 
 import "time"
 
+// MatchChange — результат сохранения матча: что изменилось относительно
+// записи в БД. Old* заполнены только если IsNew == false.
+type MatchChange struct {
+	IsNew         bool
+	TimeChanged   bool
+	TeamsChanged  bool
+	StatusChanged bool
+	OldTime       time.Time
+	OldTeamA      string
+	OldTeamB      string
+	OldStatus     string
+}
+
+// Any сообщает, был ли матч создан или изменен.
+func (c MatchChange) Any() bool {
+	return c.IsNew || c.TimeChanged || c.TeamsChanged || c.StatusChanged
+}
+
 type Match struct {
 	ID      int
 	TeamA   string

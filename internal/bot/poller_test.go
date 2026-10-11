@@ -1,6 +1,10 @@
 package bot
 
-import "testing"
+import (
+	"testing"
+
+	"cs2bot/internal/domain"
+)
 
 func TestClassifyMatchUpdate(t *testing.T) {
 	tests := []struct {
@@ -19,7 +23,10 @@ func TestClassifyMatchUpdate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			kind, ok := classifyMatchUpdate(tt.isNew, tt.timeChanged, tt.teamsChanged, tt.statusChanged, tt.status, tt.oldStatus)
+			kind, ok := classifyMatchUpdate(domain.MatchChange{
+				IsNew: tt.isNew, TimeChanged: tt.timeChanged, TeamsChanged: tt.teamsChanged,
+				StatusChanged: tt.statusChanged, OldStatus: tt.oldStatus,
+			}, tt.status)
 			if ok != tt.wantOK || (ok && kind != tt.wantKind) {
 				t.Fatalf("classifyMatchUpdate() = (%v, %v), want (%v, %v)", kind, ok, tt.wantKind, tt.wantOK)
 			}

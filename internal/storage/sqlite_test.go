@@ -36,7 +36,7 @@ func TestMatchTournamentColumn(t *testing.T) {
 	}
 
 	put := func(id int, status string, beginAt time.Time) {
-		_, _, _, _, _, _, _, _, err := s.ProcessMatch(domain.Match{
+		_, err := s.ProcessMatch(domain.Match{
 			ID: id, TeamA: "Team Falcons", TeamB: "TYLOO",
 			TeamAID: 130564, TeamBID: 3248,
 			Time: beginAt, Status: status,
@@ -244,7 +244,7 @@ func TestConcurrentWrites(t *testing.T) {
 					Time: now, Status: "not_started",
 					Tournament: "T", TournamentID: 7, TournamentBeginAt: now,
 				}
-				if _, _, _, _, _, _, _, _, err := s.ProcessMatch(m); err != nil {
+				if _, err := s.ProcessMatch(m); err != nil {
 					errs <- fmt.Errorf("ProcessMatch worker %d: %w", w, err)
 					return
 				}
@@ -267,7 +267,7 @@ func TestHLTVColumns(t *testing.T) {
 	now := time.Now()
 
 	put := func(id int, a, b string, beginAt time.Time) {
-		_, _, _, _, _, _, _, _, err := s.ProcessMatch(domain.Match{
+		_, err := s.ProcessMatch(domain.Match{
 			ID: id, TeamA: a, TeamB: b, TeamAID: 1, TeamBID: 2, Time: beginAt, Status: "not_started",
 			Tournament: "ESL Pro League", TournamentID: 7,
 		})
@@ -345,12 +345,12 @@ func TestGetScheduleMatchesUntil(t *testing.T) {
 		t.Fatal(err)
 	}
 	put := func(id int, status string, beginAt time.Time) {
-		_, _, _, _, _, _, _, _, err := s.ProcessMatch(domain.Match{
+		_, err := s.ProcessMatch(domain.Match{
 			ID: id, TeamA: "G2", TeamB: "NAVI", TeamAID: 1, TeamBID: 2,
 			Time: beginAt, Status: status,
 			Tournament: "EPL", TournamentID: 7,
 			TournamentBeginAt: now.Add(-24 * time.Hour),
-			NumberOfGames:    3,
+			NumberOfGames:     3,
 		})
 		if err != nil {
 			t.Fatalf("ProcessMatch(%d): %v", id, err)
@@ -397,7 +397,7 @@ func TestGetHLTVURLsEmptyAndChunked(t *testing.T) {
 	}
 
 	// Больше одного чанка (500 id) читается без ошибок.
-	if _, _, _, _, _, _, _, _, err := s.ProcessMatch(domain.Match{
+	if _, err := s.ProcessMatch(domain.Match{
 		ID: 700, TeamA: "A", TeamB: "B", TeamAID: 1, TeamBID: 2, Time: time.Now().Add(time.Hour), Status: "not_started",
 	}); err != nil {
 		t.Fatal(err)

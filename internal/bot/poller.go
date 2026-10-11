@@ -56,17 +56,17 @@ type matchEvent struct {
 // postponed не даёт «новый матч»: иначе связка с CleanOldMatches повторяет
 // рассылку каждую минуту. Смена времени или соперника уходит как обычно.
 // ok=false — событие для рассылки не нужно.
-func classifyMatchUpdate(isNew, timeChanged, teamsChanged, statusChanged bool, status, oldStatus string) (matchEventKind, bool) {
+func classifyMatchUpdate(c domain.MatchChange, status string) (matchEventKind, bool) {
 	switch {
-	case isNew && status == "postponed":
+	case c.IsNew && status == "postponed":
 		return 0, false
-	case isNew:
+	case c.IsNew:
 		return eventNew, true
-	case status == "running" && statusChanged && oldStatus != "running":
+	case status == "running" && c.StatusChanged && c.OldStatus != "running":
 		return eventStarted, true
-	case teamsChanged:
+	case c.TeamsChanged:
 		return eventOpponent, true
-	case timeChanged:
+	case c.TimeChanged:
 		return eventTimeChanged, true
 	default:
 		return 0, false
@@ -102,13 +102,13 @@ func (b *Bot) runPollerCycle(ctx context.Context) {
 	// после цикла (иначе при пачке новых матчей каждому прилетает спам).
 	var events []matchEvent
 	for _, match := range matches {
-		isNew, timeChanged, teamsChanged, statusChanged, oldTime, oldTeamA, oldTeamB, oldStatus, err := b.storage.ProcessMatch(match)
+		change, err := b.storage.ProcessMatch(match)
 		if err != nil {
 			slog.Error("Ошибка сохранения матча", slog.Int("match_id", match.ID), slog.Any("error", err))
 			continue
 		}
 
-		if (!isNew && !timeChanged && !teamsChanged && !statusChanged) || match.TeamA == "TBD" || match.TeamB == "TBD" {
+		if !change.Any() || match.TeamA == "TBD" || match.TeamB == "TBD" {
 			continue
 		}
 
@@ -118,17 +118,17 @@ func (b *Bot) runPollerCycle(ctx context.Context) {
 			continue
 		}
 
-		kind, ok := classifyMatchUpdate(isNew, timeChanged, teamsChanged, statusChanged, match.Status, oldStatus)
+		kind, ok := classifyMatchUpdate(change, match.Status)
 		if !ok {
 			continue
 		}
 		events = append(events, matchEvent{
 			match:       match,
 			kind:        kind,
-			timeChanged: timeChanged,
-			oldTime:     oldTime,
-			oldTeamA:    oldTeamA,
-			oldTeamB:    oldTeamB,
+			timeChanged: change.TimeChanged,
+			oldTime:     change.OldTime,
+			oldTeamA:    change.OldTeamA,
+			oldTeamB:    change.OldTeamB,
 		})
 	}
 

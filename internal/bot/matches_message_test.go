@@ -16,7 +16,7 @@ func TestFormatMatchesMessage(t *testing.T) {
 	}}
 	upcoming := []domain.Match{{
 		ID: 11, TeamA: "G2", TeamB: "FaZe", TeamAID: 1, TeamBID: 3,
-		Time: time.Date(2026, 10, 8, 15, 0, 0, 0, time.UTC),
+		Time:          time.Date(2026, 10, 8, 15, 0, 0, 0, time.UTC),
 		NumberOfGames: 3, Tournament: "EPL", TournamentID: 7,
 		TournamentBeginAt: time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC),
 	}}
@@ -54,7 +54,7 @@ func TestFormatMatchesMessageHighlightsSubs(t *testing.T) {
 	subs := []domain.TeamInfo{{ID: 1, Name: "G2"}}
 	upcoming := []domain.Match{{
 		ID: 11, TeamA: "G2", TeamB: "FaZe", TeamAID: 1, TeamBID: 3,
-		Time: time.Date(2026, 10, 8, 15, 0, 0, 0, time.UTC),
+		Time:       time.Date(2026, 10, 8, 15, 0, 0, 0, time.UTC),
 		Tournament: "EPL", TournamentID: 7,
 		TournamentBeginAt: time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC),
 	}}
