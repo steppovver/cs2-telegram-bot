@@ -1,0 +1,8 @@
+{
+  "terminalAllowlist": [
+    "git status",
+    "git diff",
+    "git log",
+    "git show"
+  ]
+}
