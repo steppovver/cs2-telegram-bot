@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math/rand/v2"
 	"time"
 
 	"cs2bot/internal/domain"
@@ -45,6 +46,15 @@ type Resolver struct {
 // NewResolver создает резолвер. search == nil — резолвер выключен.
 func NewResolver(store Store, search SearchProvider) *Resolver {
 	return &Resolver{store: store, search: search}
+}
+
+// jitterPause возвращает паузу base ± 30%.
+func jitterPause(base time.Duration) time.Duration {
+	if base <= 0 {
+		return base
+	}
+	delta := int64(base) * 3 / 10
+	return base + time.Duration(rand.Int64N(2*delta+1)) - time.Duration(delta)
 }
 
 // Start — воркер, который за resolveLeadTime до старта ищет точную
@@ -94,7 +104,7 @@ func (r *Resolver) runCycle(ctx context.Context, now time.Time, pause time.Durat
 			select {
 			case <-ctx.Done():
 				return false
-			case <-time.After(pause):
+			case <-time.After(jitterPause(pause)):
 			}
 		}
 		if ctx.Err() != nil {

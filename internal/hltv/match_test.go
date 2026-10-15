@@ -114,8 +114,27 @@ func TestResolveMatchSkipsWrongCandidates(t *testing.T) {
 	if want := "https://www.hltv.org/matches/2380123/falcons-vs-tyloo-esl-pro-league-season-24"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
-	if len(sp.queries) != 1 || !strings.HasPrefix(sp.queries[0], "site:hltv.org/matches Team Falcons vs TYLOO") {
-		t.Errorf("queries = %v", sp.queries)
+	wantQ := "site:hltv.org/matches Team Falcons vs TYLOO ESL Pro League Season 24 2026"
+	if len(sp.queries) != 1 || sp.queries[0] != wantQ {
+		t.Errorf("queries = %v, want %q", sp.queries, wantQ)
+	}
+}
+
+func TestResolveMatchQueryIncludesTournament(t *testing.T) {
+	sp := &fakeSearch{}
+	_, _ = ResolveMatch(context.Background(), sp, domain.Match{
+		ID: 1, TeamA: "G2", TeamB: "NAVI", Tournament: "IEM Cologne 2026",
+	})
+	want := "site:hltv.org/matches G2 vs NAVI IEM Cologne 2026"
+	if len(sp.queries) != 1 || sp.queries[0] != want {
+		t.Errorf("queries = %v, want %q", sp.queries, want)
+	}
+
+	sp.queries = nil
+	_, _ = ResolveMatch(context.Background(), sp, domain.Match{ID: 2, TeamA: "G2", TeamB: "NAVI"})
+	want = "site:hltv.org/matches G2 vs NAVI"
+	if len(sp.queries) != 1 || sp.queries[0] != want {
+		t.Errorf("без турнира: queries = %v, want %q", sp.queries, want)
 	}
 }
 

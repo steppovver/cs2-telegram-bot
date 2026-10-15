@@ -170,3 +170,18 @@ func TestRunCycleConsecutiveErrorsBackoff(t *testing.T) {
 		t.Errorf("запросов = %d, want %d", len(sp.queries), maxConsecutiveErrors)
 	}
 }
+
+func TestJitterPause(t *testing.T) {
+	base := 7 * time.Second
+	lo := base - base*3/10
+	hi := base + base*3/10
+	for i := 0; i < 1000; i++ {
+		got := jitterPause(base)
+		if got < lo || got > hi {
+			t.Fatalf("jitterPause(%v) = %v, want [%v, %v]", base, got, lo, hi)
+		}
+	}
+	if got := jitterPause(0); got != 0 {
+		t.Errorf("jitterPause(0) = %v, want 0", got)
+	}
+}
