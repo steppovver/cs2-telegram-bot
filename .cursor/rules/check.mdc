@@ -1,9 +1,0 @@
----
-description: Verification loop after Go changes
-globs: ["**/*.go"]
-alwaysApply: true
----
-
-# Проверка после изменений Go
-
-Команды проверки — в `AGENTS.md`, раздел «Правила кодогенерации». Здесь их не дублировать.

@@ -1,9 +1,0 @@
----
-description: Go style for cs2-telegram-bot
-globs: ["**/*.go"]
-alwaysApply: true
----
-
-# Go-стиль проекта cs2-telegram-bot
-
-Правила для Cursor и OpenCode — в `AGENTS.md`. Здесь их не дублировать.
