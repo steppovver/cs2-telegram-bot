@@ -18,8 +18,13 @@ const ddgSamplePage = `<html><body>
 <a class="result__snippet" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fignored.example">snippet</a>
 </body></html>`
 
+const ddgLiteSamplePage = `<html><body>
+<tr><td><a rel="nofollow" href="https://www.hltv.org/matches/2380123/falcons-vs-tyloo-esl-pro-league-season-24" class='result-link'>Falcons vs TYLOO</a></td></tr>
+<tr><td><a href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.hltv.org%2Fmatches%2F2371000%2Ffalcons-vs-tyloo-iem-cologne-2025&amp;rut=x" class='result-link'>Old</a></td></tr>
+</body></html>`
+
 func TestParseDDGResults(t *testing.T) {
-	got := parseDDGResults(ddgSamplePage)
+	got := parseDDGResults(ddgSamplePage, ddgResultTagRe)
 	want := []string{
 		"https://www.hltv.org/matches/2380123/falcons-vs-tyloo-esl-pro-league-season-24",
 		"https://www.hltv.org/matches/2371000/falcons-vs-tyloo-iem-cologne-2025",
@@ -29,9 +34,28 @@ func TestParseDDGResults(t *testing.T) {
 	}
 }
 
+func TestParseDDGLiteResults(t *testing.T) {
+	got := parseDDGResults(ddgLiteSamplePage, ddgLiteResultTagRe)
+	want := []string{
+		"https://www.hltv.org/matches/2380123/falcons-vs-tyloo-esl-pro-league-season-24",
+		"https://www.hltv.org/matches/2371000/falcons-vs-tyloo-iem-cologne-2025",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("parseDDGResults lite = %v, want %v", got, want)
+	}
+}
+
 func newTestDDG(srv *httptest.Server) *ddgProvider {
 	p := newDDGProvider()
 	p.endpoint = srv.URL
+	p.liteEndpoint = "" // не ходить в реальный lite при тестах
+	return p
+}
+
+func newTestDDGWithLite(main, lite *httptest.Server) *ddgProvider {
+	p := newDDGProvider()
+	p.endpoint = main.URL
+	p.liteEndpoint = lite.URL
 	return p
 }
 
@@ -123,5 +147,70 @@ func TestNewSearchProvider(t *testing.T) {
 	}
 	if p, err := NewSearchProvider("ddg", ""); p == nil || err != nil {
 		t.Errorf("ddg: (%v, %v)", p, err)
+	}
+}
+
+func TestDDGLiteFallback(t *testing.T) {
+	main := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer main.Close()
+
+	var liteMethod, liteQuery string
+	lite := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		liteMethod = r.Method
+		_ = r.ParseForm()
+		liteQuery = r.PostForm.Get("q")
+		_, _ = w.Write([]byte(ddgLiteSamplePage))
+	}))
+	defer lite.Close()
+
+	urls, err := newTestDDGWithLite(main, lite).Search(context.Background(), "site:hltv.org/matches A vs B")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(urls) != 2 {
+		t.Errorf("urls = %v", urls)
+	}
+	if liteMethod != http.MethodPost || liteQuery != "site:hltv.org/matches A vs B" {
+		t.Errorf("lite method=%s q=%q", liteMethod, liteQuery)
+	}
+}
+
+func TestDDGLiteBlocked(t *testing.T) {
+	main := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer main.Close()
+	lite := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer lite.Close()
+
+	_, err := newTestDDGWithLite(main, lite).Search(context.Background(), "q")
+	if !errors.Is(err, ErrSearchBlocked) {
+		t.Errorf("err = %v, want ErrSearchBlocked", err)
+	}
+}
+
+func TestDDGNoLiteOnNetworkError(t *testing.T) {
+	main := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer main.Close()
+
+	liteCalls := 0
+	lite := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		liteCalls++
+		_, _ = w.Write([]byte(ddgLiteSamplePage))
+	}))
+	defer lite.Close()
+
+	_, err := newTestDDGWithLite(main, lite).Search(context.Background(), "q")
+	if err == nil || errors.Is(err, ErrSearchBlocked) {
+		t.Errorf("500 должен быть обычной ошибкой, got %v", err)
+	}
+	if liteCalls != 0 {
+		t.Errorf("lite не должен вызываться при обычной ошибке, calls=%d", liteCalls)
 	}
 }

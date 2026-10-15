@@ -187,6 +187,9 @@ func ValidateMatchURL(candidate string, m domain.Match) (string, bool) {
 // ResolveMatch ищет страницу матча. Пустая строка без ошибки — не нашли.
 func ResolveMatch(ctx context.Context, sp SearchProvider, m domain.Match) (string, error) {
 	query := "site:hltv.org/matches " + m.TeamA + " vs " + m.TeamB
+	if t := strings.TrimSpace(m.Tournament); t != "" {
+		query += " " + t
+	}
 	results, err := sp.Search(ctx, query)
 	if err != nil {
 		return "", fmt.Errorf("поиск страницы матча %d: %w", m.ID, err)
