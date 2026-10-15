@@ -174,6 +174,16 @@ func (b *Bot) broadcastMatchEvents(ctx context.Context, events []matchEvent) {
 		events[i].match.HLTVURL = startedMatches[j].HLTVURL
 	}
 
+	// Имена YouTube-каналов — для всех карточек событий (из кеша БД).
+	allMatches := make([]domain.Match, len(events))
+	for i, ev := range events {
+		allMatches[i] = ev.match
+	}
+	b.storage.FillStreamChannels(allMatches)
+	for i := range events {
+		events[i].match.Streams = allMatches[i].Streams
+	}
+
 	userEvents := make(map[int64][]matchEvent)
 	for _, ev := range events {
 		users, err := b.storage.GetUsersByTeamIDs(ev.match.TeamAID, ev.match.TeamBID)

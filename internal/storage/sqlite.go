@@ -71,6 +71,13 @@ CREATE TABLE IF NOT EXISTS meta (
 	key TEXT PRIMARY KEY,
 	value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS stream_channels (
+	video_id TEXT PRIMARY KEY,
+	channel TEXT NOT NULL DEFAULT '',
+	channel_url TEXT NOT NULL DEFAULT '',
+	checked_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_stream_channels_checked_at ON stream_channels(checked_at);
 `
 
 type Storage struct {
