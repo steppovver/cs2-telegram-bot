@@ -1,0 +1,24 @@
+#!/bin/bash
+# prerm: остановить и выключить сервис/таймеры при удалении пакета.
+set -euo pipefail
+
+case "${1:-}" in
+remove)
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl stop cs2bot.service 2>/dev/null || true
+    systemctl stop cs2bot-teams-puller.timer 2>/dev/null || true
+    systemctl stop cs2bot-teams-puller.service 2>/dev/null || true
+    systemctl stop cs2bot-backup.timer 2>/dev/null || true
+    systemctl stop cs2bot-backup.service 2>/dev/null || true
+    systemctl disable cs2bot.service 2>/dev/null || true
+    systemctl disable cs2bot-teams-puller.timer 2>/dev/null || true
+    systemctl disable cs2bot-backup.timer 2>/dev/null || true
+  fi
+  ;;
+upgrade)
+  # stop делает preinst; здесь ничего не трогаем, чтобы не гасить таймеры
+  # между версиями без нужды.
+  ;;
+esac
+
+exit 0

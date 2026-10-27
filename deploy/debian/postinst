@@ -1,0 +1,166 @@
+#!/bin/bash
+# postinst: пользователь, каталоги, миграция со старой раскладки, enable юнитов.
+set -euo pipefail
+
+CS2BOT_USER=cs2bot
+CS2BOT_HOME=/var/lib/cs2bot
+CS2BOT_ETC=/etc/cs2bot
+OLD_OPT=/opt/cs2bot
+OLD_UNITS_DIR=/etc/systemd/system
+EXAMPLE=/usr/share/doc/cs2bot/examples/config_example.json
+
+ensure_user() {
+  if getent passwd "$CS2BOT_USER" >/dev/null; then
+    # Старая установка могла создать дом в /home/cs2bot — поправляем.
+    usermod -d "$CS2BOT_HOME" -s /usr/sbin/nologin "$CS2BOT_USER" 2>/dev/null || true
+  else
+    useradd --system --home-dir "$CS2BOT_HOME" --create-home \
+      --shell /usr/sbin/nologin --user-group "$CS2BOT_USER"
+  fi
+}
+
+ensure_dirs() {
+  mkdir -p "$CS2BOT_ETC" "$CS2BOT_HOME/backups"
+  chown root:"$CS2BOT_USER" "$CS2BOT_ETC"
+  chmod 0750 "$CS2BOT_ETC"
+  chown -R "$CS2BOT_USER:$CS2BOT_USER" "$CS2BOT_HOME"
+  chmod 0750 "$CS2BOT_HOME"
+  chmod 0700 "$CS2BOT_HOME/backups"
+  # Старый деплой делал chown -R cs2bot на /opt/cs2bot. Каталог с бинарями,
+  # которые запускает root (preinst), не должен быть писаемым для cs2bot.
+  chown root:root "$OLD_OPT" "$OLD_OPT/bin"
+  chmod 0755 "$OLD_OPT" "$OLD_OPT/bin"
+}
+
+# Юниты старого деплоя лежат в /etc/systemd/system и перекрывают пакетные
+# из /usr/lib/systemd/system. Убираем те, что ссылаются на старую раскладку
+# /opt/cs2bot/ или совпадают с пакетными; правленные админом юниты не трогаем.
+remove_old_units() {
+  local unit path
+  for unit in cs2bot.service cs2bot-teams-puller.service cs2bot-teams-puller.timer; do
+    path="$OLD_UNITS_DIR/$unit"
+    if [ ! -f "$path" ] || [ -L "$path" ]; then
+      continue
+    fi
+    if grep -Eq '/opt/cs2bot/(cs2bot|teams_puller|config\.json)' "$path" ||
+      cmp -s "$path" "/usr/lib/systemd/system/$unit"; then
+      if command -v systemctl >/dev/null 2>&1; then
+        systemctl disable "$unit" >/dev/null 2>&1 || true
+      fi
+      rm -f "$path"
+      echo "Удалён старый юнит $path"
+    fi
+  done
+}
+
+# Однократный перенос config/БД/архивов из /opt/cs2bot в новые пути.
+migrate_from_opt() {
+  if [ -f "$OLD_OPT/config.json" ] && [ ! -f "$CS2BOT_ETC/config.json" ]; then
+    mv "$OLD_OPT/config.json" "$CS2BOT_ETC/config.json"
+    echo "Перенесён конфиг: $OLD_OPT/config.json -> $CS2BOT_ETC/config.json"
+    # Абсолютный путь к старой базе указывает в /opt, куда сервис писать не может.
+    if grep -q '"/opt/cs2bot/bot\.db"' "$CS2BOT_ETC/config.json"; then
+      sed -i 's|"/opt/cs2bot/bot\.db"|"bot.db"|' "$CS2BOT_ETC/config.json"
+      echo "db_path в конфиге: /opt/cs2bot/bot.db -> bot.db (относительно $CS2BOT_HOME)"
+    fi
+  fi
+
+  if [ -f "$OLD_OPT/bot.db" ] && [ ! -f "$CS2BOT_HOME/bot.db" ]; then
+    mv "$OLD_OPT/bot.db" "$CS2BOT_HOME/bot.db"
+    if [ -f "$OLD_OPT/bot.db-wal" ]; then
+      mv "$OLD_OPT/bot.db-wal" "$CS2BOT_HOME/bot.db-wal"
+    fi
+    if [ -f "$OLD_OPT/bot.db-shm" ]; then
+      mv "$OLD_OPT/bot.db-shm" "$CS2BOT_HOME/bot.db-shm"
+    fi
+    echo "Перенесена БД: $OLD_OPT/bot.db -> $CS2BOT_HOME/bot.db"
+  fi
+
+  if [ -d "$OLD_OPT/backups" ]; then
+    local f moved=0
+    for f in "$OLD_OPT/backups"/bot-*.db.gz "$OLD_OPT/backups"/bot-*.db; do
+      [ -f "$f" ] || continue
+      case "$f" in
+      *.db)
+        # Несжатые predeploy-копии старого deploy.sh: сжимаем, чтобы их видела ротация.
+        gzip -c "$f" >"$CS2BOT_HOME/backups/$(basename "$f").gz"
+        rm -f "$f"
+        ;;
+      *)
+        mv "$f" "$CS2BOT_HOME/backups/"
+        ;;
+      esac
+      moved=$((moved + 1))
+    done
+    if [ "$moved" -gt 0 ]; then
+      echo "Перенесено архивов бэкапов: $moved -> $CS2BOT_HOME/backups"
+    fi
+    rmdir "$OLD_OPT/backups" 2>/dev/null || true
+  fi
+
+  rm -f "$OLD_OPT/cs2bot.prev" \
+    "$OLD_OPT/cs2bot" \
+    "$OLD_OPT/teams_puller" \
+    "$OLD_OPT/backup-sqlite.sh"
+}
+
+ensure_config() {
+  if [ ! -f "$CS2BOT_ETC/config.json" ]; then
+    if [ -f "$EXAMPLE" ]; then
+      cp "$EXAMPLE" "$CS2BOT_ETC/config.json"
+      echo "Создан $CS2BOT_ETC/config.json из примера — впишите токены перед стартом."
+    else
+      echo "ПРЕДУПРЕЖДЕНИЕ: нет примера конфига ($EXAMPLE)" >&2
+    fi
+    CREATED_CONFIG=1
+  fi
+  if [ -f "$CS2BOT_ETC/config.json" ]; then
+    chown root:"$CS2BOT_USER" "$CS2BOT_ETC/config.json"
+    chmod 0640 "$CS2BOT_ETC/config.json"
+  fi
+  chown -R "$CS2BOT_USER:$CS2BOT_USER" "$CS2BOT_HOME"
+}
+
+# Убрать root-cron со старым backup-sqlite.sh — его заменяет systemd timer.
+cleanup_old_cron() {
+  if ! command -v crontab >/dev/null 2>&1; then
+    return 0
+  fi
+  local current
+  current="$(crontab -l 2>/dev/null || true)"
+  if echo "$current" | grep -q 'backup-sqlite\.sh'; then
+    echo "$current" | grep -v 'backup-sqlite\.sh' | crontab - || true
+    echo "Удалена cron-задача backup-sqlite.sh (заменена cs2bot-backup.timer)"
+  fi
+}
+
+CREATED_CONFIG=0
+
+case "${1:-}" in
+configure)
+  ensure_user
+  ensure_dirs
+  remove_old_units
+  migrate_from_opt
+  ensure_config
+  cleanup_old_cron
+
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload
+    systemctl enable --now cs2bot-teams-puller.timer >/dev/null 2>&1 || true
+    systemctl enable --now cs2bot-backup.timer >/dev/null 2>&1 || true
+
+    if [ "$CREATED_CONFIG" = 1 ]; then
+      # Без токенов бот после перезагрузки падал бы в цикле рестартов,
+      # поэтому в автозапуск его включает админ, когда заполнит конфиг.
+      echo "Конфиг из примера — сервис не включён и не запущен."
+      echo "Отредактируйте $CS2BOT_ETC/config.json и выполните: systemctl enable --now cs2bot"
+    else
+      systemctl enable cs2bot.service >/dev/null 2>&1 || true
+      systemctl restart cs2bot.service
+    fi
+  fi
+  ;;
+esac
+
+exit 0

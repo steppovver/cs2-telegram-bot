@@ -20,6 +20,9 @@ teams.db-wal
 /bot
 *.exe
 
+# Сборка .deb
+/dist/
+
 # Зависимости среды разработки
 .vscode/
 .idea/

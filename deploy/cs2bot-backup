@@ -1,0 +1,149 @@
+#!/bin/bash
+# Онлайн-бэкап SQLite через .backup (корректно при WAL, в отличие от cp).
+# Использование:
+#   cs2bot-backup [--prefix NAME] [DB_PATH] [BACKUP_DIR] [KEEP]
+# Примеры:
+#   cs2bot-backup
+#   cs2bot-backup --prefix predeploy
+#   cs2bot-backup /var/lib/cs2bot/bot.db /var/lib/cs2bot/backups 7
+set -euo pipefail
+
+PREFIX="bot"
+DB_PATH="/var/lib/cs2bot/bot.db"
+BACKUP_DIR="/var/lib/cs2bot/backups"
+KEEP=7
+PREDEPLOY_KEEP=3
+
+usage() {
+  echo "Использование: cs2bot-backup [--prefix NAME] [DB_PATH] [BACKUP_DIR] [KEEP]" >&2
+  exit 2
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+  --prefix)
+    [ $# -ge 2 ] || usage
+    PREFIX="$2"
+    shift 2
+    ;;
+  --prefix=*)
+    PREFIX="${1#--prefix=}"
+    shift
+    ;;
+  -h | --help)
+    usage
+    ;;
+  --)
+    shift
+    break
+    ;;
+  -*)
+    echo "ОШИБКА: неизвестный флаг: $1" >&2
+    usage
+    ;;
+  *)
+    break
+    ;;
+  esac
+done
+
+[ $# -ge 1 ] && DB_PATH="$1"
+[ $# -ge 2 ] && BACKUP_DIR="$2"
+[ $# -ge 3 ] && KEEP="$3"
+
+if ! [[ "$KEEP" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ОШИБКА: KEEP должен быть положительным целым, получено: $KEEP" >&2
+  exit 1
+fi
+if ! [[ "$PREFIX" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  echo "ОШИБКА: некорректный --prefix: $PREFIX" >&2
+  exit 1
+fi
+
+command -v sqlite3 >/dev/null || {
+  echo "ОШИБКА: sqlite3 не установлен (apt install sqlite3)" >&2
+  exit 1
+}
+[ -f "$DB_PATH" ] || {
+  echo "ОШИБКА: БД не найдена: $DB_PATH" >&2
+  exit 1
+}
+
+mkdir -p "$BACKUP_DIR"
+chmod 0700 "$BACKUP_DIR" 2>/dev/null || true
+
+LOCK="$BACKUP_DIR/.lock"
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  echo "ОШИБКА: бэкап уже выполняется (lock $LOCK)" >&2
+  exit 1
+fi
+
+STAMP="$(date +%F-%H%M%S)"
+if [ "$PREFIX" = "bot" ]; then
+  BASE="bot-$STAMP"
+else
+  BASE="bot-$PREFIX-$STAMP"
+fi
+TMP_DB="$BACKUP_DIR/.$BASE.db.tmp"
+TMP_GZ="$BACKUP_DIR/.$BASE.db.gz.tmp"
+OUT="$BACKUP_DIR/$BASE.db.gz"
+
+cleanup() {
+  rm -f "$TMP_DB" "$TMP_GZ"
+}
+trap cleanup EXIT
+
+# Ретраи при SQLITE_BUSY: busy_timeout у CLI по умолчанию 0.
+MAX_TRIES=5
+TRY=1
+while true; do
+  if sqlite3 -cmd '.timeout 30000' "$DB_PATH" ".backup '$TMP_DB'"; then
+    break
+  fi
+  if [ "$TRY" -ge "$MAX_TRIES" ]; then
+    echo "ОШИБКА: sqlite3 .backup не удался после $MAX_TRIES попыток" >&2
+    exit 1
+  fi
+  echo "ПРЕДУПРЕЖДЕНИЕ: .backup busy, повтор $TRY/$MAX_TRIES..." >&2
+  TRY=$((TRY + 1))
+  sleep 2
+done
+
+CHECK="$(sqlite3 "$TMP_DB" 'PRAGMA quick_check;')"
+if [ "$CHECK" != "ok" ]; then
+  echo "ОШИБКА: PRAGMA quick_check провалился: $CHECK" >&2
+  exit 1
+fi
+
+gzip -c "$TMP_DB" >"$TMP_GZ"
+if ! gzip -t "$TMP_GZ"; then
+  echo "ОШИБКА: gzip -t провалился для $TMP_GZ" >&2
+  exit 1
+fi
+
+mv -f "$TMP_GZ" "$OUT"
+rm -f "$TMP_DB"
+trap - EXIT
+
+# Ротация ежедневных bot-YYYY-*.db.gz (без predeploy и прочих префиксов).
+rotate_glob() {
+  local pattern="$1"
+  local keep="$2"
+  local files
+  # shellcheck disable=SC2086
+  files="$(ls -1t $pattern 2>/dev/null || true)"
+  if [ -z "$files" ]; then
+    return 0
+  fi
+  echo "$files" | tail -n +"$((keep + 1))" | xargs -r rm -f
+}
+
+if [ "$PREFIX" = "bot" ]; then
+  # Паттерн в кавычках: иначе shell развернёт glob до вызова и сломает KEEP.
+  rotate_glob "${BACKUP_DIR}/bot-[0-9][0-9][0-9][0-9]-*.db.gz" "$KEEP"
+else
+  rotate_glob "${BACKUP_DIR}/bot-${PREFIX}-*.db.gz" "$PREDEPLOY_KEEP"
+fi
+
+echo "OK: $OUT ($(du -h "$OUT" | cut -f1))"

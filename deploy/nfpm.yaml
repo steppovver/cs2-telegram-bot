@@ -1,0 +1,71 @@
+name: cs2bot
+arch: amd64
+platform: linux
+version: ${VERSION}
+section: net
+priority: optional
+maintainer: "cs2bot maintainers <noreply@localhost>"
+description: |
+  Telegram-бот расписания матчей Counter-Strike 2.
+  Подписки на команды, уведомления, напоминания и ежедневный дайджест.
+vendor: cs2bot
+homepage: https://t.me/cs2_tracker_telegram_bot
+license: Proprietary
+depends:
+  - sqlite3
+  - systemd
+contents:
+  - src: ./dist/bin/cs2bot
+    dst: /opt/cs2bot/bin/cs2bot
+    file_info:
+      mode: 0755
+  - src: ./dist/bin/teams_puller
+    dst: /opt/cs2bot/bin/teams_puller
+    file_info:
+      mode: 0755
+  - src: ./dist/bin/cs2bot-backup
+    dst: /opt/cs2bot/bin/cs2bot-backup
+    file_info:
+      mode: 0755
+  - src: /opt/cs2bot/bin/cs2bot
+    dst: /usr/bin/cs2bot
+    type: symlink
+  - src: /opt/cs2bot/bin/teams_puller
+    dst: /usr/bin/cs2bot-teams-puller
+    type: symlink
+  - src: /opt/cs2bot/bin/cs2bot-backup
+    dst: /usr/bin/cs2bot-backup
+    type: symlink
+  - src: ./deploy/cs2bot.service
+    dst: /usr/lib/systemd/system/cs2bot.service
+    file_info:
+      mode: 0644
+  - src: ./deploy/cs2bot-teams-puller.service
+    dst: /usr/lib/systemd/system/cs2bot-teams-puller.service
+    file_info:
+      mode: 0644
+  - src: ./deploy/cs2bot-teams-puller.timer
+    dst: /usr/lib/systemd/system/cs2bot-teams-puller.timer
+    file_info:
+      mode: 0644
+  - src: ./deploy/cs2bot-backup.service
+    dst: /usr/lib/systemd/system/cs2bot-backup.service
+    file_info:
+      mode: 0644
+  - src: ./deploy/cs2bot-backup.timer
+    dst: /usr/lib/systemd/system/cs2bot-backup.timer
+    file_info:
+      mode: 0644
+  - src: ./config_example.json
+    dst: /usr/share/doc/cs2bot/examples/config_example.json
+    file_info:
+      mode: 0644
+  - src: ./deploy/Caddyfile.cs2bot.example
+    dst: /usr/share/doc/cs2bot/examples/Caddyfile.cs2bot.example
+    file_info:
+      mode: 0644
+scripts:
+  preinstall: ./deploy/debian/preinst
+  postinstall: ./deploy/debian/postinst
+  preremove: ./deploy/debian/prerm
+  postremove: ./deploy/debian/postrm

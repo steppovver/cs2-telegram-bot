@@ -45,8 +45,15 @@ Cursor и OpenCode правят один и тот же репозиторий �
 - `internal/config/` — `config.go`: загрузка и нормализация `config.json` (дефолты: `poll 60s`, `finished_poll 900s`, `api_rate_limit 1000`, `search_provider ddg`, `telegram_mode polling`, `webhook_listen 127.0.0.1:18090`, `digest_preset_hours [9,10,11,12]`, `max_streams 0=all, cap 10`)
 - `internal/domain/` — `models.go`: `Match`, `MatchChange`, `MatchStream`, `TeamInfo`, `DigestSettings` и др.
 - `internal/storage/` — SQLite: `sqlite.go` (схема, миграции), `matches.go`, `subscriptions.go`, `settings.go`, `streams.go` (кеш `stream_channels`)
-- `deploy/` — `cs2bot.service`, `cs2bot-teams-puller.service`, `cs2bot-teams-puller.timer`, `Caddyfile.cs2bot.example` (webhook за Caddy), `backup-sqlite.sh`, `deploy.sh`
+- `deploy/` — упаковка `.deb` (`nfpm.yaml`, `build-deb.sh`, `debian/{preinst,postinst,prerm,postrm}`), systemd-юниты (`cs2bot.service`, `cs2bot-teams-puller.{service,timer}`, `cs2bot-backup.{service,timer}`), `cs2bot-backup` (онлайн-бэкап SQLite), `deploy.sh` (сборка + `apt install` на сервер), `Caddyfile.cs2bot.example` (webhook за Caddy)
 - Прочее: `api-examples/` (пример ответа PandaScore), `config_example.json`, `.env.example` (переменные для `deploy.sh`)
+
+### Раскладка пакета на сервере
+
+- Бинари: `/opt/cs2bot/bin/{cs2bot,teams_puller,cs2bot-backup}`, симлинки в `/usr/bin`
+- Конфиг: `/etc/cs2bot/config.json` (не входит в пакет, `postinst` создаёт из примера только если файла нет)
+- Данные: `/var/lib/cs2bot/bot.db`, бэкапы в `/var/lib/cs2bot/backups/`
+- Примеры: `/usr/share/doc/cs2bot/examples/`
 
 ## Воркеры (`cmd/bot/main.go`)
 
