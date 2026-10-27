@@ -32,8 +32,19 @@ fi
 BUILD_DATE="$(date -u +%Y-%m-%d)"
 LDFLAGS="-X cs2bot/internal/bot.Version=$VERSION -X cs2bot/internal/bot.BuildDate=$BUILD_DATE -X cs2bot/internal/bot.BuildCommit=$SHORT_SHA"
 
+# go install кладёт бинари в GOPATH/bin, которого часто нет в PATH.
+GOBIN_DIR="$(go env GOBIN 2>/dev/null || true)"
+if [ -z "$GOBIN_DIR" ]; then
+  GOBIN_DIR="$(go env GOPATH 2>/dev/null)/bin"
+fi
+if [ -n "$GOBIN_DIR" ] && [ -d "$GOBIN_DIR" ]; then
+  PATH="$GOBIN_DIR:$PATH"
+  export PATH
+fi
+
 command -v nfpm >/dev/null || {
   echo "ОШИБКА: nfpm не найден. Установи: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest" >&2
+  echo "  (бинарь окажется в $GOBIN_DIR — скрипт подхватит его сам)" >&2
   exit 1
 }
 
