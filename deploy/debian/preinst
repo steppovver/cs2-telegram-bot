@@ -16,25 +16,22 @@ stop_services() {
 # Снимок БД до замены файлов. Нет базы — нечего бэкапить (например, бот
 # ещё ни разу не запускался), обновление при этом не блокируем.
 predeploy_backup() {
-  if [ -f /var/lib/cs2bot/bot.db ]; then
-    if command -v cs2bot-backup >/dev/null 2>&1 && getent passwd cs2bot >/dev/null; then
-      if ! runuser -u cs2bot -- cs2bot-backup --prefix predeploy; then
-        echo "ОШИБКА: predeploy-бэкап через cs2bot-backup не удался" >&2
-        return 1
-      fi
-      return 0
+  local db=/var/lib/cs2bot/bot.db
+  [ -f "$db" ] || return 0
+
+  if command -v cs2bot-backup >/dev/null 2>&1 && getent passwd cs2bot >/dev/null; then
+    if ! runuser -u cs2bot -- cs2bot-backup --prefix predeploy; then
+      echo "ОШИБКА: predeploy-бэкап через cs2bot-backup не удался" >&2
+      return 1
     fi
-    legacy_backup /var/lib/cs2bot/bot.db /var/lib/cs2bot/backups
-    return
+    return 0
   fi
 
-  # Старая раскладка: cs2bot-backup ещё нет, бэкапим sqlite3 напрямую.
-  if [ -f /opt/cs2bot/bot.db ]; then
-    legacy_backup /opt/cs2bot/bot.db /opt/cs2bot/backups
-  fi
+  # Запасной путь: ещё нет cs2bot-backup (теоретически) или нет пользователя.
+  sqlite_backup "$db" /var/lib/cs2bot/backups
 }
 
-legacy_backup() {
+sqlite_backup() {
   local db="$1"
   local dir="$2"
 
