@@ -9,6 +9,10 @@
   "finished_poll_interval_seconds": 900,
   "api_rate_limit_per_hour": 1000,
   "search_provider": "ddg",
+  "telegram_mode": "polling",
+  "webhook_public_url": "",
+  "webhook_listen": "127.0.0.1:18090",
+  "webhook_secret": "",
   "digest_preset_hours": [9, 10, 11, 12],
   "default_teams": [
     { "id": 124523,  "name": "Spirit" },

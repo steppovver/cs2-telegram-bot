@@ -64,14 +64,22 @@ func main() {
 
 	pandaClient := api.NewClient(cfg.PandaToken, cfg.APIRateLimit)
 
+	poller, err := bot.NewTelegramPoller(cfg)
+	if err != nil {
+		slog.Error("Ошибка настройки режима Telegram", slog.Any("error", err))
+		os.Exit(1)
+	}
+
 	tb, err := telebot.NewBot(telebot.Settings{
 		Token:  cfg.TelegramToken,
-		Poller: &telebot.LongPoller{Timeout: 10 * time.Second},
+		Poller: poller,
 	})
 	if err != nil {
 		slog.Error("Ошибка создания бота", slog.Any("error", err))
 		os.Exit(1)
 	}
+
+	bot.PrepareTelegramMode(tb, cfg)
 
 	_ = tb.SetCommands([]telebot.Command{
 		{Text: "start", Description: "Открыть главное меню"},

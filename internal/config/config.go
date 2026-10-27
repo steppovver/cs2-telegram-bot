@@ -2,6 +2,8 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -28,6 +30,14 @@ type Config struct {
 	SearchProvider string `json:"search_provider"`
 	// SearchBaseURL — адрес инстанса SearXNG (только для search_provider=searxng).
 	SearchBaseURL string `json:"search_base_url"`
+	// Режим получения апдейтов Telegram: "polling" (по умолчанию) или "webhook".
+	TelegramMode string `json:"telegram_mode"`
+	// Публичный HTTPS-адрес вебхука, например https://bot.example.com/tg.
+	WebhookPublicURL string `json:"webhook_public_url"`
+	// Локальный адрес HTTP-сервера за reverse proxy: "" = 127.0.0.1:18090.
+	WebhookListen string `json:"webhook_listen"`
+	// Секрет для заголовка X-Telegram-Bot-Api-Secret-Token (1–256 символов A-Za-z0-9_-).
+	WebhookSecret string `json:"webhook_secret"`
 }
 
 // Провайдеры поиска ссылок HLTV.
@@ -79,8 +89,89 @@ func Load(path string) (*Config, error) {
 	cfg.PollIntervalSec = NormalizePollInterval(cfg.PollIntervalSec)
 	cfg.FinishedPollIntervalSec = NormalizeFinishedPollInterval(cfg.FinishedPollIntervalSec)
 	cfg.APIRateLimit = NormalizeAPIRateLimit(cfg.APIRateLimit)
+	if mode, ok := NormalizeTelegramMode(cfg.TelegramMode); ok {
+		cfg.TelegramMode = mode
+	}
+	cfg.WebhookListen = NormalizeWebhookListen(cfg.WebhookListen)
+	cfg.WebhookPublicURL = strings.TrimSpace(cfg.WebhookPublicURL)
+	cfg.WebhookSecret = strings.TrimSpace(cfg.WebhookSecret)
 
 	return &cfg, nil
+}
+
+// Режимы получения апдейтов Telegram.
+const (
+	TelegramModePolling  = "polling"
+	TelegramModeWebhook  = "webhook"
+	DefaultWebhookListen = "127.0.0.1:18090"
+)
+
+// NormalizeTelegramMode приводит значение к известному режиму:
+// пустое = polling, неизвестное ok=false.
+func NormalizeTelegramMode(mode string) (string, bool) {
+	switch mode = strings.ToLower(strings.TrimSpace(mode)); mode {
+	case "":
+		return TelegramModePolling, true
+	case TelegramModePolling, TelegramModeWebhook:
+		return mode, true
+	}
+	return "", false
+}
+
+// NormalizeWebhookListen чистит адрес локального HTTP-сервера вебхука:
+// пустое = 127.0.0.1:18090.
+func NormalizeWebhookListen(listen string) string {
+	if listen = strings.TrimSpace(listen); listen == "" {
+		return DefaultWebhookListen
+	}
+	return listen
+}
+
+// ValidateWebhook проверяет поля вебхука. В режиме polling всегда nil.
+// В режиме webhook требует https-URL и секрет 1–256 символов A-Za-z0-9_-.
+func ValidateWebhook(cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("config is nil")
+	}
+	mode, ok := NormalizeTelegramMode(cfg.TelegramMode)
+	if !ok {
+		return fmt.Errorf("unknown telegram_mode %q (ожидается polling или webhook)", cfg.TelegramMode)
+	}
+	if mode != TelegramModeWebhook {
+		return nil
+	}
+
+	rawURL := strings.TrimSpace(cfg.WebhookPublicURL)
+	if rawURL == "" {
+		return fmt.Errorf("webhook_public_url обязателен в режиме webhook")
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("webhook_public_url: %w", err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("webhook_public_url должен начинаться с https://")
+	}
+	if u.Host == "" {
+		return fmt.Errorf("webhook_public_url без хоста")
+	}
+
+	secret := strings.TrimSpace(cfg.WebhookSecret)
+	if secret == "" {
+		return fmt.Errorf("webhook_secret обязателен в режиме webhook")
+	}
+	if len(secret) > 256 {
+		return fmt.Errorf("webhook_secret длиннее 256 символов")
+	}
+	for _, r := range secret {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_', r == '-':
+			continue
+		default:
+			return fmt.Errorf("webhook_secret: недопустимый символ %q (только A-Za-z0-9_-)", r)
+		}
+	}
+	return nil
 }
 
 // Интервалы опроса в секундах. Дефолты: поллер матчей — 60с, добор

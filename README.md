@@ -99,9 +99,29 @@ go run ./cmd/bot
 | `api_rate_limit_per_hour` | Лимит REST-запросов PandaScore в час для статистики/варнингов (дефолт `1000`) |
 | `search_provider` | Поиск точных ссылок на матчи HLTV за 12 часов до старта: `ddg` (дефолт, DuckDuckGo без ключа), `searxng` или `none` (только поиск Google) |
 | `search_base_url` | Адрес своего инстанса SearXNG, нужен только для `search_provider=searxng` |
+| `telegram_mode` | Способ получения апдейтов Telegram: `polling` (дефолт) или `webhook` |
+| `webhook_public_url` | Публичный HTTPS-адрес вебхука, например `https://cs2bot.example.com/tg` (обязателен при `telegram_mode=webhook`) |
+| `webhook_listen` | Локальный адрес HTTP-сервера за reverse proxy (дефолт `127.0.0.1:18090`) |
+| `webhook_secret` | Секрет заголовка `X-Telegram-Bot-Api-Secret-Token` (обязателен при webhook; `openssl rand -hex 32`) |
 
 Секреты (`config.json`, `.env`) в git не коммитятся, см. `.gitignore`.
 Пример деплойных переменных — в `.env.example`.
+
+### Режим webhook (опционально)
+
+По умолчанию бот работает через long polling — публичный адрес не нужен.
+Webhook удобен, если апдейты должны приходить push’ем за reverse proxy
+(отдельный поддомен + TLS). Пример блока Caddy — `deploy/Caddyfile.cs2bot.example`.
+
+Кратко на сервере:
+
+1. DNS A-запись поддомена на IP сервера (DNS only, без Cloudflare-прокси).
+2. `CS2BOT_HOSTNAME=<поддомен>` в окружении Caddy, дописать блок из примера в `Caddyfile`, `systemctl reload caddy`.
+3. В `config.json`: `telegram_mode=webhook`, `webhook_public_url=https://<поддомен>/tg`,
+   `webhook_listen=127.0.0.1:18090`, `webhook_secret` из `openssl rand -hex 32`.
+4. Перед стартом: `ss -ltnp | grep 18090` (вывод должен быть пустым), затем рестарт `cs2bot`.
+
+При обратном переключении на `polling` бот сам снимает webhook у Telegram.
 
 ### Справочник команд (`teams_puller`)
 
@@ -183,18 +203,18 @@ ssh -p 22 root@HOST "cp -f /opt/cs2bot/cs2bot.prev /opt/cs2bot/cs2bot && chown c
 ```
 cmd/bot            точка входа бота
 cmd/teams_puller   наполнение справочника команд
-internal/bot       хендлеры, воркеры (поллер, напоминания, рассылка, дайджест), админка
+internal/bot       хендлеры, воркеры (поллер, напоминания, рассылка, дайджест), админка, telegram_poller
 internal/api       клиент PandaScore (чанки, ретраи, пагинация)
 internal/hltv      поиск и резолв точных ссылок на матчи HLTV
 internal/youtube   oEmbed: резолв имен YouTube-каналов для подписей стримов
 internal/storage   SQLite: схема, миграции, подписки, матчи, дайджесты, кеш stream_channels
 internal/config    загрузка и нормализация config.json
 internal/domain    доменные модели
-deploy/            cs2bot.service, backup-sqlite.sh, deploy.sh
+deploy/            cs2bot.service, Caddyfile.cs2bot.example, backup-sqlite.sh, deploy.sh
 ```
 
 - Хранилище — SQLite в WAL-режиме, один файл `bot.db`.
-- Telegram — long polling, поэтому только **один инстанс** на токен.
+- Telegram — long polling или webhook (`telegram_mode`), только **один инстанс** на токен.
 - Воркеры: опрос API каждую минуту, напоминания каждую минуту (окно 5 минут),
   дайджест каждую минуту, рассылка через очередь (лимит ~25 msg/sec,
   чистка заблокировавших бота, пауза по FloodWait).

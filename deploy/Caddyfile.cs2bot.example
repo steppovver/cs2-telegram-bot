@@ -1,0 +1,22 @@
+# Фрагмент для /etc/caddy/Caddyfile рядом с блоком {$TPROXY_HOSTNAME}.
+# Глобальные настройки (ACME, таймауты) переиспользуются.
+#
+# Перед включением:
+#   1. DNS A-запись поддомена на IP сервера (DNS only, без Cloudflare-прокси)
+#   2. CS2BOT_HOSTNAME=<поддомен> в окружении Caddy (рядом с TPROXY_HOSTNAME)
+#   3. ss -ltnp | grep 18090  — вывод должен быть пустым
+#   4. systemctl reload caddy
+#   5. в config.json бота:
+#        "telegram_mode": "webhook",
+#        "webhook_public_url": "https://<поддомен>/tg",
+#        "webhook_listen": "127.0.0.1:18090",
+#        "webhook_secret": "<openssl rand -hex 32>"
+
+{$CS2BOT_HOSTNAME} {
+	handle /tg {
+		reverse_proxy 127.0.0.1:18090
+	}
+	handle {
+		respond 404
+	}
+}
