@@ -187,28 +187,33 @@ func (s *Storage) ProcessMatch(m domain.Match) (domain.MatchChange, error) {
 		return domain.MatchChange{}, err
 	}
 
+	oldTime := time.Unix(dbTimeUnix, 0)
+	timeChanged := dbTimeUnix != m.Time.Unix()
 	change := domain.MatchChange{
-		TimeChanged:   dbTimeUnix != m.Time.Unix(),
-		TeamsChanged:  !sameTeamPair(dbTeamA, dbTeamB, m.TeamA, m.TeamB),
-		StatusChanged: dbStatus != m.Status,
-		OldTime:       time.Unix(dbTimeUnix, 0),
-		OldTeamA:      dbTeamA,
-		OldTeamB:      dbTeamB,
-		OldStatus:     dbStatus,
+		TimeChanged:    timeChanged,
+		MinorTimeShift: timeChanged && m.Time.Sub(oldTime).Abs() < domain.MinorTimeShift,
+		TeamsChanged:   !sameTeamPair(dbTeamA, dbTeamB, m.TeamA, m.TeamB),
+		StatusChanged:  dbStatus != m.Status,
+		OldTime:        oldTime,
+		OldTeamA:       dbTeamA,
+		OldTeamB:       dbTeamB,
+		OldStatus:      dbStatus,
 	}
 
 	slog.Debug("ProcessMatch update",
 		slog.Int("match_id", m.ID),
 		slog.String("teams", fmt.Sprintf("%s vs %s", m.TeamA, m.TeamB)),
 		slog.Bool("time_changed", change.TimeChanged),
+		slog.Bool("minor_time_shift", change.MinorTimeShift),
 		slog.Bool("teams_changed", change.TeamsChanged),
 		slog.Bool("status_changed", change.StatusChanged),
 	)
 
-	// Сдвиг времени перевооружает напоминание "за 5 минут": иначе после
-	// уже отправленного напоминания повторное не придет никогда.
+	// Крупный сдвиг времени перевооружает напоминание "за 5 минут": иначе
+	// после уже отправленного напоминания повторное не придет никогда.
+	// Мелкие задержки (< MinorTimeShift) флаг не трогают — иначе флуд.
 	newNotified := dbNotified
-	if change.TimeChanged {
+	if change.TimeChanged && !change.MinorTimeShift {
 		newNotified = 0
 	}
 

@@ -66,7 +66,7 @@ func classifyMatchUpdate(c domain.MatchChange, status string) (matchEventKind, b
 		return eventStarted, true
 	case c.TeamsChanged:
 		return eventOpponent, true
-	case c.TimeChanged:
+	case c.TimeChanged && !c.MinorTimeShift:
 		return eventTimeChanged, true
 	default:
 		return 0, false

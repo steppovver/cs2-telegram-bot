@@ -2,17 +2,22 @@ package domain
 
 import "time"
 
+// MinorTimeShift — сдвиг начала, о котором не сообщаем: задержки в день
+// матча идут пачкой по 10–20 минут.
+const MinorTimeShift = 30 * time.Minute
+
 // MatchChange — результат сохранения матча: что изменилось относительно
 // записи в БД. Old* заполнены только если IsNew == false.
 type MatchChange struct {
-	IsNew         bool
-	TimeChanged   bool
-	TeamsChanged  bool
-	StatusChanged bool
-	OldTime       time.Time
-	OldTeamA      string
-	OldTeamB      string
-	OldStatus     string
+	IsNew          bool
+	TimeChanged    bool
+	MinorTimeShift bool // |новое - старое| < MinorTimeShift
+	TeamsChanged   bool
+	StatusChanged  bool
+	OldTime        time.Time
+	OldTeamA       string
+	OldTeamB       string
+	OldStatus      string
 }
 
 // Any сообщает, был ли матч создан или изменен.
