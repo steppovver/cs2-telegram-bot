@@ -7,9 +7,12 @@ Wants=network-online.target
 Type=oneshot
 User=cs2bot
 Group=cs2bot
-WorkingDirectory=/opt/cs2bot
-ExecStart=/opt/cs2bot/teams_puller -config /opt/cs2bot/config.json
-# Токены лежат в /opt/cs2bot/config.json (0600, владелец cs2bot),
+WorkingDirectory=/var/lib/cs2bot
+ExecStart=/opt/cs2bot/bin/teams_puller -config /etc/cs2bot/config.json
+# Токены лежат в /etc/cs2bot/config.json (0640, root:cs2bot),
 # в unit-файл секреты не кладем.
 NoNewPrivileges=true
 PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cs2bot

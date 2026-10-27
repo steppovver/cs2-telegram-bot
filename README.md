@@ -68,6 +68,7 @@ Telegram-бот расписания матчей CS2: подписки на к�
 
 - Go 1.25+
 - `sqlite3` (только для бэкапов на сервере, сам бот на pure-Go драйвере)
+- `nfpm` — для сборки `.deb` (`go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest`)
 
 ### Быстрый старт
 
@@ -138,31 +139,47 @@ systemd timer `cs2bot-teams-puller.timer` раз в сутки в 05:00.
 
 ## Деплой
 
+Пакет `.deb` ставит бинари, юниты и скрипт бэкапа. Конфиг (`/etc/cs2bot/config.json`)
+пакет **не владеет** и при обновлении не перезаписывает.
+
+Раскладка на сервере:
+
+| Путь | Назначение |
+|---|---|
+| `/opt/cs2bot/bin/` | `cs2bot`, `teams_puller`, `cs2bot-backup` |
+| `/usr/bin/cs2bot` и др. | симлинки на бинари |
+| `/etc/cs2bot/config.json` | конфиг (`0640`, `root:cs2bot`) |
+| `/var/lib/cs2bot/bot.db` | SQLite (домашний каталог пользователя `cs2bot`) |
+| `/var/lib/cs2bot/backups/` | архивы БД (`0700`) |
+| `/usr/share/doc/cs2bot/examples/` | свежие примеры конфига и Caddyfile |
+
 ### Подготовка
 
 ```bash
 cp .env.example .env
-# заполнить DEPLOY_USER / DEPLOY_HOST / DEPLOY_PORT / DEPLOY_DIR
+# заполнить DEPLOY_USER / DEPLOY_HOST / DEPLOY_PORT
+# для сборки .deb нужен nfpm: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
 ```
 
-### Первичная настройка сервера (один раз)
+### Первичная установка
 
 ```bash
-useradd -r -m cs2bot
-apt install -y sqlite3
-mkdir -p /opt/cs2bot/backups && chown -R cs2bot:cs2bot /opt/cs2bot
+# локально
+bash deploy/build-deb.sh
+scp -P 22 dist/cs2bot_*.deb root@HOST:/tmp/
 
-# юнит systemd
-scp -P 22 deploy/cs2bot.service root@HOST:/etc/systemd/system/cs2bot.service
-ssh -p 22 root@HOST "systemctl daemon-reload && systemctl enable cs2bot"
-
-# конфиг — ОДИН раз вручную, deploy.sh его не трогает
-scp -P 22 config.json root@HOST:/opt/cs2bot/config.json
-ssh -p 22 root@HOST "chown cs2bot:cs2bot /opt/cs2bot/config.json && chmod 600 /opt/cs2bot/config.json"
-
-# ежедневный бэкап БД
-ssh -p 22 root@HOST "(crontab -l 2>/dev/null; echo '0 4 * * * /opt/cs2bot/backup-sqlite.sh /opt/cs2bot/bot.db /opt/cs2bot/backups 7 >>/var/log/cs2bot-backup.log 2>&1') | crontab -"
+# на сервере
+apt install -y /tmp/cs2bot_*.deb
+# отредактировать токены
+nano /etc/cs2bot/config.json
+systemctl enable --now cs2bot
+systemctl status cs2bot
 ```
+
+`postinst` создаёт системного пользователя `cs2bot`, каталоги и включает
+`cs2bot-teams-puller.timer` (05:00) и `cs2bot-backup.timer` (04:00).
+Если конфига ещё не было — копирует пример и **не** включает бота,
+пока не впишете токены. Если конфиг уже есть — включает и перезапускает `cs2bot`.
 
 ### Обновления
 
@@ -170,10 +187,10 @@ ssh -p 22 root@HOST "(crontab -l 2>/dev/null; echo '0 4 * * * /opt/cs2bot/backup
 bash deploy/deploy.sh
 ```
 
-Скрипт собирает оба бинаря (версия подставляется из git-тега/коммита),
-останавливает сервис, бэкапит БД, сохраняет `cs2bot.prev` для отката,
-заливает файлы, чинит права и рестартует с проверкой `is-active`.
-Файл юнита заливается только если изменился (сверка по checksum).
+Скрипт собирает `.deb` (версия из git-тега/коммита), копирует в
+`/var/cache/cs2bot-debs/` на сервере и ставит через `apt install`.
+Перед распаковкой `preinst` останавливает сервис и делает predeploy-бэкап БД.
+Конфиг не трогается. На сервере хранятся 3 последних `.deb` для отката.
 
 Проверка после деплоя:
 
@@ -181,12 +198,26 @@ bash deploy/deploy.sh
 ssh -p 22 root@HOST "systemctl is-active cs2bot && journalctl -u cs2bot -n 20 --no-pager"
 ```
 
-### Откат
+### Откат пакета
 
 ```bash
-# предыдущий бинарь
-ssh -p 22 root@HOST "cp -f /opt/cs2bot/cs2bot.prev /opt/cs2bot/cs2bot && chown cs2bot:cs2bot /opt/cs2bot/cs2bot && systemctl restart cs2bot && systemctl is-active cs2bot"
-# БД — последний архив из /opt/cs2bot/backups/ (сервис перед заменой остановить)
+ssh -p 22 root@HOST "ls -1t /var/cache/cs2bot-debs/cs2bot_*.deb"
+ssh -p 22 root@HOST "apt install --allow-downgrades -y /var/cache/cs2bot-debs/cs2bot_<prev>_amd64.deb"
+```
+
+### Восстановление БД из бэкапа
+
+```bash
+ssh -p 22 root@HOST '
+  systemctl stop cs2bot cs2bot-teams-puller.timer cs2bot-teams-puller.service
+  cd /var/lib/cs2bot
+  # обязательно убрать sidecar WAL, иначе SQLite накатит его поверх снимка
+  rm -f bot.db-wal bot.db-shm
+  gzip -dc backups/bot-YYYY-MM-DD-HHMMSS.db.gz > bot.db
+  chown cs2bot:cs2bot bot.db
+  systemctl start cs2bot cs2bot-teams-puller.timer
+  systemctl is-active cs2bot
+'
 ```
 
 ## Админка
@@ -210,10 +241,12 @@ internal/youtube   oEmbed: резолв имен YouTube-каналов для �
 internal/storage   SQLite: схема, миграции, подписки, матчи, дайджесты, кеш stream_channels
 internal/config    загрузка и нормализация config.json
 internal/domain    доменные модели
-deploy/            cs2bot.service, Caddyfile.cs2bot.example, backup-sqlite.sh, deploy.sh
+deploy/            nfpm.yaml, build-deb.sh, deploy.sh, debian/*, systemd-юниты, cs2bot-backup
 ```
 
-- Хранилище — SQLite в WAL-режиме, один файл `bot.db`.
+- Хранилище — SQLite в WAL-режиме, на проде файл `/var/lib/cs2bot/bot.db`.
+- Деплой — пакет `.deb` (`deploy/build-deb.sh` / `deploy/deploy.sh`); бэкап БД —
+  systemd timer `cs2bot-backup.timer` (ежедневно 04:00).
 - Telegram — long polling или webhook (`telegram_mode`), только **один инстанс** на токен.
 - Воркеры: опрос API каждую минуту, напоминания каждую минуту (окно 5 минут),
   дайджест каждую минуту, рассылка через очередь (лимит ~25 msg/sec,

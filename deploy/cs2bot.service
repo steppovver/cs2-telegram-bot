@@ -7,14 +7,17 @@ Wants=network-online.target
 Type=simple
 User=cs2bot
 Group=cs2bot
-WorkingDirectory=/opt/cs2bot
-ExecStart=/opt/cs2bot/cs2bot -config /opt/cs2bot/config.json
+WorkingDirectory=/var/lib/cs2bot
+ExecStart=/opt/cs2bot/bin/cs2bot -config /etc/cs2bot/config.json
 Restart=always
 RestartSec=5
-# Токены лежат в /opt/cs2bot/config.json (0600, владелец cs2bot),
+# Токены лежат в /etc/cs2bot/config.json (0640, root:cs2bot),
 # в unit-файл секреты не кладем.
 NoNewPrivileges=true
 PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cs2bot
 
 [Install]
 WantedBy=multi-user.target

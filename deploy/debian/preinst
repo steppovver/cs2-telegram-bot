@@ -1,0 +1,66 @@
+#!/bin/bash
+# preinst: остановить сервис и снять predeploy-бэкап перед распаковкой.
+set -euo pipefail
+
+stop_services() {
+  if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-active --quiet cs2bot 2>/dev/null; then
+      systemctl stop cs2bot || true
+    fi
+    if systemctl is-active --quiet cs2bot-teams-puller.service 2>/dev/null; then
+      systemctl stop cs2bot-teams-puller.service || true
+    fi
+  fi
+}
+
+# Снимок БД до замены файлов. Нет базы — нечего бэкапить (например, бот
+# ещё ни разу не запускался), обновление при этом не блокируем.
+predeploy_backup() {
+  local db=/var/lib/cs2bot/bot.db
+  [ -f "$db" ] || return 0
+
+  if command -v cs2bot-backup >/dev/null 2>&1 && getent passwd cs2bot >/dev/null; then
+    if ! runuser -u cs2bot -- cs2bot-backup --prefix predeploy; then
+      echo "ОШИБКА: predeploy-бэкап через cs2bot-backup не удался" >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  # Запасной путь: ещё нет cs2bot-backup (теоретически) или нет пользователя.
+  sqlite_backup "$db" /var/lib/cs2bot/backups
+}
+
+sqlite_backup() {
+  local db="$1"
+  local dir="$2"
+
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    echo "ОШИБКА: sqlite3 не установлен, predeploy-бэкап $db невозможен" >&2
+    return 1
+  fi
+
+  mkdir -p "$dir"
+  local stamp out tmp
+  stamp="$(date +%F-%H%M%S)"
+  out="$dir/bot-predeploy-$stamp.db.gz"
+  tmp="$dir/.bot-predeploy-$stamp.db.tmp"
+  # shellcheck disable=SC2064
+  trap "rm -f '$tmp' '$out.tmp'" RETURN
+  if ! sqlite3 -cmd '.timeout 30000' "$db" ".backup '$tmp'"; then
+    echo "ОШИБКА: sqlite3 .backup не удался ($db)" >&2
+    return 1
+  fi
+  gzip -c "$tmp" >"$out.tmp"
+  mv -f "$out.tmp" "$out"
+  echo "predeploy backup: $out"
+}
+
+case "${1:-}" in
+install | upgrade)
+  stop_services
+  predeploy_backup
+  ;;
+esac
+
+exit 0

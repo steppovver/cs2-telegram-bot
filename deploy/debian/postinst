@@ -1,0 +1,74 @@
+#!/bin/bash
+# postinst: пользователь, каталоги, конфиг (если нет), enable юнитов.
+set -euo pipefail
+
+CS2BOT_USER=cs2bot
+CS2BOT_HOME=/var/lib/cs2bot
+CS2BOT_ETC=/etc/cs2bot
+EXAMPLE=/usr/share/doc/cs2bot/examples/config_example.json
+
+ensure_user() {
+  if getent passwd "$CS2BOT_USER" >/dev/null; then
+    usermod -d "$CS2BOT_HOME" -s /usr/sbin/nologin "$CS2BOT_USER" 2>/dev/null || true
+  else
+    useradd --system --home-dir "$CS2BOT_HOME" --create-home \
+      --shell /usr/sbin/nologin --user-group "$CS2BOT_USER"
+  fi
+}
+
+ensure_dirs() {
+  mkdir -p "$CS2BOT_ETC" "$CS2BOT_HOME/backups" /opt/cs2bot/bin
+  chown root:"$CS2BOT_USER" "$CS2BOT_ETC"
+  chmod 0750 "$CS2BOT_ETC"
+  chown -R "$CS2BOT_USER:$CS2BOT_USER" "$CS2BOT_HOME"
+  chmod 0750 "$CS2BOT_HOME"
+  chmod 0700 "$CS2BOT_HOME/backups"
+  # Бинари запускает и root (preinst-бэкап) — каталог не должен быть писаемым для cs2bot.
+  chown root:root /opt/cs2bot /opt/cs2bot/bin
+  chmod 0755 /opt/cs2bot /opt/cs2bot/bin
+}
+
+ensure_config() {
+  if [ ! -f "$CS2BOT_ETC/config.json" ]; then
+    if [ -f "$EXAMPLE" ]; then
+      cp "$EXAMPLE" "$CS2BOT_ETC/config.json"
+      echo "Создан $CS2BOT_ETC/config.json из примера — впишите токены перед стартом."
+    else
+      echo "ПРЕДУПРЕЖДЕНИЕ: нет примера конфига ($EXAMPLE)" >&2
+    fi
+    CREATED_CONFIG=1
+  fi
+  if [ -f "$CS2BOT_ETC/config.json" ]; then
+    chown root:"$CS2BOT_USER" "$CS2BOT_ETC/config.json"
+    chmod 0640 "$CS2BOT_ETC/config.json"
+  fi
+  chown -R "$CS2BOT_USER:$CS2BOT_USER" "$CS2BOT_HOME"
+}
+
+CREATED_CONFIG=0
+
+case "${1:-}" in
+configure)
+  ensure_user
+  ensure_dirs
+  ensure_config
+
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload
+    systemctl enable --now cs2bot-teams-puller.timer >/dev/null 2>&1 || true
+    systemctl enable --now cs2bot-backup.timer >/dev/null 2>&1 || true
+
+    if [ "$CREATED_CONFIG" = 1 ]; then
+      # Без токенов бот после перезагрузки падал бы в цикле рестартов,
+      # поэтому в автозапуск его включает админ, когда заполнит конфиг.
+      echo "Конфиг из примера — сервис не включён и не запущен."
+      echo "Отредактируйте $CS2BOT_ETC/config.json и выполните: systemctl enable --now cs2bot"
+    else
+      systemctl enable cs2bot.service >/dev/null 2>&1 || true
+      systemctl restart cs2bot.service
+    fi
+  fi
+  ;;
+esac
+
+exit 0

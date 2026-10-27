@@ -1,0 +1,19 @@
+[Unit]
+Description=CS2 bot SQLite backup
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=cs2bot
+Group=cs2bot
+UMask=0077
+WorkingDirectory=/var/lib/cs2bot
+ExecStart=/opt/cs2bot/bin/cs2bot-backup
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cs2bot

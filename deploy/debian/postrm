@@ -1,0 +1,20 @@
+#!/bin/bash
+# postrm: при purge удаляем /etc/cs2bot; данные в /var/lib/cs2bot оставляем.
+set -euo pipefail
+
+case "${1:-}" in
+purge)
+  rm -rf /etc/cs2bot
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+  fi
+  echo "Конфиг /etc/cs2bot удалён. База и бэкапы в /var/lib/cs2bot сохранены — удалите вручную при необходимости."
+  ;;
+remove)
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+  fi
+  ;;
+esac
+
+exit 0
