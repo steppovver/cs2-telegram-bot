@@ -13,6 +13,7 @@ Cursor и OpenCode правят один и тот же репозиторий �
 3. Если код уже соблюдает правила ниже — оставь его как есть.
 4. Проверки и запреты бери только из раздела «Правила кодогенерации». Не подменяй их другим набором команд.
 5. Коммит — только когда пользователь прямо попросил.
+6. Пользовательский и деплойный `README.md` обновляй в той же задаче, если меняется поведение бота, поля `config.json`, команды, деплой или архитектура, о которых там написано. Не оставляй README устаревшим «на потом».
 
 ## Терминал
 
@@ -21,7 +22,7 @@ Cursor и OpenCode правят один и тот же репозиторий �
 ## Стек
 
 - **Язык**: Go `1.25.0` (см. `go.mod`)
-- **Telegram**: `gopkg.in/telebot.v3`, long polling (`telebot.LongPoller`), только **один инстанс** на токен
+- **Telegram**: `gopkg.in/telebot.v3`, long polling или webhook (выбор через `telegram_mode`), только **один инстанс** на токен
 - **Логи**: `github.com/lmittmann/tint` через `log/slog`
 - **База данных**: SQLite, pure-Go драйвер `modernc.org/sqlite`, WAL-режим, один файл `bot.db`
 - **API**: PandaScore API (REST, токен `pandascore_token`)
@@ -38,12 +39,13 @@ Cursor и OpenCode правят один и тот же репозиторий �
   - `broadcaster.go` — очередь рассылки (~25 msg/sec, чистка заблокировавших, пауза по FloodWait)
   - `streams.go`, `tournaments.go`, `format.go`, `matches_message.go`, `tz.go` — рендер расписания/счета, часовые пояса
   - `hltv.go`, `youtube.go` — подключение резолверов к рендеру
+  - `telegram_poller.go` — выбор polling/webhook и свой `WebhookPoller` (вместо `telebot.Webhook`, который паникует на остановке)
 - `internal/hltv/` — поиск и резолв точных ссылок на матчи HLTV (`resolver.go`, `search.go` с провайдерами `ddg`/`searxng`/`none`, `match.go`); запуск за 12 часов до старта
 - `internal/youtube/` — oEmbed-резолвер имен YouTube-каналов (`resolver.go`, `oembed.go`, `videoid.go`), окно `[-6h, +48h]`, кеш в `stream_channels`
-- `internal/config/` — `config.go`: загрузка и нормализация `config.json` (дефолты: `poll 60s`, `finished_poll 900s`, `api_rate_limit 1000`, `search_provider ddg`, `digest_preset_hours [9,10,11,12]`, `max_streams 0=all, cap 10`)
+- `internal/config/` — `config.go`: загрузка и нормализация `config.json` (дефолты: `poll 60s`, `finished_poll 900s`, `api_rate_limit 1000`, `search_provider ddg`, `telegram_mode polling`, `webhook_listen 127.0.0.1:18090`, `digest_preset_hours [9,10,11,12]`, `max_streams 0=all, cap 10`)
 - `internal/domain/` — `models.go`: `Match`, `MatchChange`, `MatchStream`, `TeamInfo`, `DigestSettings` и др.
 - `internal/storage/` — SQLite: `sqlite.go` (схема, миграции), `matches.go`, `subscriptions.go`, `settings.go`, `streams.go` (кеш `stream_channels`)
-- `deploy/` — `cs2bot.service`, `cs2bot-teams-puller.service`, `cs2bot-teams-puller.timer`, `backup-sqlite.sh`, `deploy.sh`
+- `deploy/` — `cs2bot.service`, `cs2bot-teams-puller.service`, `cs2bot-teams-puller.timer`, `Caddyfile.cs2bot.example` (webhook за Caddy), `backup-sqlite.sh`, `deploy.sh`
 - Прочее: `api-examples/` (пример ответа PandaScore), `config_example.json`, `.env.example` (переменные для `deploy.sh`)
 
 ## Воркеры (`cmd/bot/main.go`)
@@ -57,4 +59,5 @@ Cursor и OpenCode правят один и тот же репозиторий �
 3. **Проверки**: `go vet ./...`, `go build ./cmd/bot`, `go build ./cmd/teams_puller`, `go test ./...` перед завершением задачи. При падении — исправить и повторить, финальный ответ только после зеленой сборки.
 4. **БД**: схему и миграции не менять без явного подтверждения пользователя.
 5. **Время**: везде с учетом часового пояса пользователя (дайджест хранит UTC offset).
-6. **Секреты**: `telegram_token`, `pandascore_token` только из `config.json` / env, никогда в код, логи и git (`config.json`, `.env` в `.gitignore` и `.cursorignore`; БД `*.db*` и бинари `/cs2bot`, `/teams_puller`, `/bot` тоже игнорируются).
+6. **Секреты**: `telegram_token`, `pandascore_token`, `webhook_secret` только из `config.json` / env, никогда в код, логи и git (`config.json`, `.env` в `.gitignore` и `.cursorignore`; БД `*.db*` и бинари `/cs2bot`, `/teams_puller`, `/bot` тоже игнорируются).
+7. **README**: при изменении пользовательского поведения, конфига, деплоя или публичной архитектуры — обновить соответствующие разделы `README.md` в том же изменении.
