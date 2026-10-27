@@ -33,24 +33,38 @@ const (
 )
 
 // ddgProvider — бесплатный поиск через HTML-версию DuckDuckGo (без ключа).
+// При капче/блоке html-эндпоинта пробует lite.duckduckgo.com.
 type ddgProvider struct {
-	client   *http.Client
-	endpoint string
+	client       *http.Client
+	endpoint     string
+	liteEndpoint string
 }
 
 func newDDGProvider() *ddgProvider {
 	return &ddgProvider{
-		client:   &http.Client{Timeout: searchHTTPTimeout},
-		endpoint: "https://html.duckduckgo.com/html/",
+		client:       &http.Client{Timeout: searchHTTPTimeout},
+		endpoint:     "https://html.duckduckgo.com/html/",
+		liteEndpoint: "https://lite.duckduckgo.com/lite/",
 	}
 }
 
 var (
-	ddgResultTagRe = regexp.MustCompile(`(?is)<a\s[^>]*class="[^"]*\bresult__a\b[^"]*"[^>]*>`)
-	ddgHrefRe      = regexp.MustCompile(`(?is)\shref="([^"]+)"`)
+	ddgResultTagRe     = regexp.MustCompile(`(?is)<a\s[^>]*class="[^"]*\bresult__a\b[^"]*"[^>]*>`)
+	ddgLiteResultTagRe = regexp.MustCompile(`(?is)<a\s[^>]*class=["'][^"']*\bresult-link\b[^"']*["'][^>]*>`)
+	ddgHrefRe          = regexp.MustCompile(`(?is)\shref="([^"]+)"`)
 )
 
+// Search пробует html-эндпоинт; при ErrSearchBlocked — фолбэк на lite.
+// Обычные сетевые ошибки (reset и т.п.) lite не лечит — это намеренно.
 func (p *ddgProvider) Search(ctx context.Context, query string) ([]string, error) {
+	urls, err := p.searchHTML(ctx, query)
+	if errors.Is(err, ErrSearchBlocked) && p.liteEndpoint != "" {
+		return p.searchLite(ctx, query)
+	}
+	return urls, err
+}
+
+func (p *ddgProvider) searchHTML(ctx context.Context, query string) ([]string, error) {
 	form := url.Values{"q": {query}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -79,18 +93,55 @@ func (p *ddgProvider) Search(ctx context.Context, query string) ([]string, error
 		return nil, fmt.Errorf("DDG статус %d", resp.StatusCode)
 	}
 
-	urls := parseDDGResults(string(body))
+	urls := parseDDGResults(string(body), ddgResultTagRe)
 	if len(urls) == 0 && strings.Contains(string(body), "anomaly") {
 		return nil, fmt.Errorf("DDG показал проверку: %w", ErrSearchBlocked)
 	}
 	return urls, nil
 }
 
-// parseDDGResults достает целевые URL из HTML-выдачи DDG. Ссылки результатов
-// обернуты редиректом //duckduckgo.com/l/?uddg=<url>, его разворачиваем.
-func parseDDGResults(page string) []string {
+func (p *ddgProvider) searchLite(ctx context.Context, query string) ([]string, error) {
+	form := url.Values{"q": {query}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.liteEndpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("создание запроса DDG lite: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", searchUA)
+	req.Header.Set("Accept-Language", "en-US,en;q=0.8")
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("запрос DDG lite: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, searchMaxBody))
+	if err != nil {
+		return nil, fmt.Errorf("чтение ответа DDG lite: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+		return nil, fmt.Errorf("DDG lite статус %d: %w", resp.StatusCode, ErrSearchBlocked)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("DDG lite статус %d", resp.StatusCode)
+	}
+
+	urls := parseDDGResults(string(body), ddgLiteResultTagRe)
+	if len(urls) == 0 && strings.Contains(string(body), "anomaly") {
+		return nil, fmt.Errorf("DDG lite показал проверку: %w", ErrSearchBlocked)
+	}
+	return urls, nil
+}
+
+// parseDDGResults достает целевые URL из HTML-выдачи DDG по тегам
+// результатов (result__a / result-link). Ссылки html-версии обернуты
+// редиректом //duckduckgo.com/l/?uddg=<url>, его разворачиваем;
+// у lite ссылки обычно прямые — unwrapDDGLink их пропускает как есть.
+func parseDDGResults(page string, tagRe *regexp.Regexp) []string {
 	var out []string
-	for _, tag := range ddgResultTagRe.FindAllString(page, -1) {
+	for _, tag := range tagRe.FindAllString(page, -1) {
 		m := ddgHrefRe.FindStringSubmatch(tag)
 		if m == nil {
 			continue

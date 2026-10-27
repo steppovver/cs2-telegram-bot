@@ -2,23 +2,59 @@
 
 Telegram-бот на Go для отслеживания матчей Counter-Strike 2 (SQLite + PandaScore API).
 
-Подхвачено Cursor / OpenCode / Codex: общие правила лежат в `OPENCODE.md`, Cursor-специфика — в `.cursor/rules/`.
+Единственный свод правил для Cursor и OpenCode — этот файл. Оба читают его сами, других файлов правил не заводить.
 
-## Стек и архитектура
-- **Язык**: Go (актуальная версия из `go.mod`)
-- **База данных**: SQLite (драйвер `modernc.org/sqlite`), WAL-режим, один файл `bot.db`
-- **API**: PandaScore API
-- `cmd/bot/main.go` — точка входа бота
-- `cmd/teams_puller/main.go` — утилита синхронизации команд
-- `internal/api/` — клиенты внешних API (PandaScore)
-- `internal/bot/` — обработчики Telegram (handlers, workers: поллер, напоминания, рассылка, дайджест)
-- `internal/hltv/` — поиск и резолв точных ссылок на матчи HLTV
-- `internal/domain/` — доменные модели и интерфейсы
-- `internal/storage/` — слой работы с базой данных (SQLite)
-- `deploy/` — `cs2bot.service`, `backup-sqlite.sh`, `deploy.sh`
+## Не затирать чужую работу
+
+Cursor и OpenCode правят один и тот же репозиторий и обязаны следовать этому файлу, а не вкусу конкретной модели.
+
+1. Перед правкой прочитай файл и незакоммиченный diff. Чужие свежие изменения сохраняй и встраивайся в них, не откатывай и не пиши файл заново.
+2. Меняй только то, что нужно для текущей задачи. Не переформатируй, не переименовывай и не рефактори остальное.
+3. Если код уже соблюдает правила ниже — оставь его как есть.
+4. Проверки и запреты бери только из раздела «Правила кодогенерации». Не подменяй их другим набором команд.
+5. Коммит — только когда пользователь прямо попросил.
+
+## Терминал
+
+Без спроса можно только чтение git: `git status`, `git diff`, `git log`, `git show`. В Cursor это `.cursor/permissions.json`, в OpenCode — `permissions` в `opencode.json`. Любая другая команда идёт через обычный запрос инструмента. Обходить его нельзя.
+
+## Стек
+
+- **Язык**: Go `1.25.0` (см. `go.mod`)
+- **Telegram**: `gopkg.in/telebot.v3`, long polling (`telebot.LongPoller`), только **один инстанс** на токен
+- **Логи**: `github.com/lmittmann/tint` через `log/slog`
+- **База данных**: SQLite, pure-Go драйвер `modernc.org/sqlite`, WAL-режим, один файл `bot.db`
+- **API**: PandaScore API (REST, токен `pandascore_token`)
+
+## Архитектура
+
+- `cmd/bot/main.go` — точка входа: конфиг, логгер, SQLite, PandaScore-клиент, telebot, резолверы, запуск 7 воркеров + `botApp.Start()` в `sync.WaitGroup` с graceful shutdown по `SIGINT/SIGTERM`
+- `cmd/teams_puller/main.go` — отдельный бинарь справочника команд: тянет команды с игроками из PandaScore в те же таблицы `teams`/`players`; на сервере — systemd timer `cs2bot-teams-puller.timer` раз в сутки
+- `internal/api/` — клиент PandaScore: `client.go` (чанки, ретраи, пагинация, учет лимита запросов), `types.go`, `mapping.go`
+- `internal/bot/` — Telegram-слой:
+  - `handlers.go`, `digest_handler.go`, `score_handler.go`, `admin.go` — хендлеры и админка (`/admin`, `/version`)
+  - `poller.go` — опрос предстоящих/live матчей; `finished_poller.go` — добор завершенных для кнопки `📊`
+  - `reminders.go` — напоминания за 5 минут; `digest_worker.go` — ежедневный дайджест
+  - `broadcaster.go` — очередь рассылки (~25 msg/sec, чистка заблокировавших, пауза по FloodWait)
+  - `streams.go`, `tournaments.go`, `format.go`, `matches_message.go`, `tz.go` — рендер расписания/счета, часовые пояса
+  - `hltv.go`, `youtube.go` — подключение резолверов к рендеру
+- `internal/hltv/` — поиск и резолв точных ссылок на матчи HLTV (`resolver.go`, `search.go` с провайдерами `ddg`/`searxng`/`none`, `match.go`); запуск за 12 часов до старта
+- `internal/youtube/` — oEmbed-резолвер имен YouTube-каналов (`resolver.go`, `oembed.go`, `videoid.go`), окно `[-6h, +48h]`, кеш в `stream_channels`
+- `internal/config/` — `config.go`: загрузка и нормализация `config.json` (дефолты: `poll 60s`, `finished_poll 900s`, `api_rate_limit 1000`, `search_provider ddg`, `digest_preset_hours [9,10,11,12]`, `max_streams 0=all, cap 10`)
+- `internal/domain/` — `models.go`: `Match`, `MatchChange`, `MatchStream`, `TeamInfo`, `DigestSettings` и др.
+- `internal/storage/` — SQLite: `sqlite.go` (схема, миграции), `matches.go`, `subscriptions.go`, `settings.go`, `streams.go` (кеш `stream_channels`)
+- `deploy/` — `cs2bot.service`, `cs2bot-teams-puller.service`, `cs2bot-teams-puller.timer`, `backup-sqlite.sh`, `deploy.sh`
+- Прочее: `api-examples/` (пример ответа PandaScore), `config_example.json`, `.env.example` (переменные для `deploy.sh`)
+
+## Воркеры (`cmd/bot/main.go`)
+
+Опрос матчей (`poll_interval_seconds`, 15–3600) → добор завершенных (`finished_poll_interval_seconds`, 60–86400) → HLTV-резолвер → YouTube-резолвер (каждые 5 мин) → напоминания (каждую минуту, окно 5 мин) → рассылка → дайджест (каждую минуту). Расписание, напоминания, дайджест и события поллера читают имена стримов только из кеша БД.
 
 ## Правила кодогенерации
-1. **Обработка ошибок**: явно через `if err != nil`, оборачивание с контекстом (`fmt.Errorf("...: %w", err)`).
-2. **Конкурентность**: `context.Context`, без утечек горутин, `defer` для закрытия соединений.
-3. **Проверки**: `go vet ./...`, `go build ./cmd/bot`, `go test ./...` перед завершением задачи.
-4. Секреты только из `config.json` / env, не коммитить (`config.json`, `.env` в `.gitignore` и `.cursorignore`).
+
+1. **Ошибки**: только явно через `if err != nil`, оборачивание с контекстом (`fmt.Errorf("...: %w", err)`). Не глотать.
+2. **Конкурентность**: `context.Context` во всех воркерах и I/O, `defer` для закрытия соединений/транзакций, без утечек горутин (`WaitGroup` в `main`).
+3. **Проверки**: `go vet ./...`, `go build ./cmd/bot`, `go build ./cmd/teams_puller`, `go test ./...` перед завершением задачи. При падении — исправить и повторить, финальный ответ только после зеленой сборки.
+4. **БД**: схему и миграции не менять без явного подтверждения пользователя.
+5. **Время**: везде с учетом часового пояса пользователя (дайджест хранит UTC offset).
+6. **Секреты**: `telegram_token`, `pandascore_token` только из `config.json` / env, никогда в код, логи и git (`config.json`, `.env` в `.gitignore` и `.cursorignore`; БД `*.db*` и бинари `/cs2bot`, `/teams_puller`, `/bot` тоже игнорируются).
