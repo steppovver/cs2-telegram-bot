@@ -147,6 +147,48 @@ func TestResolveMatchNotFound(t *testing.T) {
 	}
 }
 
+func TestResolveMatchPicksHighestID(t *testing.T) {
+	// Повторная встреча: в выдаче сначала старый матч (27.10), потом новый (29.10).
+	m := domain.Match{
+		ID: 1, TeamA: "Vitality", TeamB: "Natus Vincere",
+		Tournament: "PGL Masters Bucharest 2026",
+		Time:       time.Date(2026, 10, 29, 10, 23, 0, 0, time.UTC),
+	}
+	oldURL := "https://www.hltv.org/matches/2399747/vitality-vs-natus-vincere-pgl-masters-bucharest-2026"
+	newURL := "https://www.hltv.org/matches/2399753/vitality-vs-natus-vincere-pgl-masters-bucharest-2026"
+	sp := &fakeSearch{results: []string{oldURL, newURL}}
+	got, err := ResolveMatch(context.Background(), sp, m)
+	if err != nil {
+		t.Fatalf("ResolveMatch: %v", err)
+	}
+	if got != newURL {
+		t.Errorf("got %q, want %q", got, newURL)
+	}
+	wantQ := "site:hltv.org/matches Vitality vs Natus Vincere PGL Masters Bucharest 2026 Oct 29"
+	if len(sp.queries) != 1 || sp.queries[0] != wantQ {
+		t.Errorf("queries = %v, want %q", sp.queries, wantQ)
+	}
+
+	// Один кандидат — он же.
+	sp = &fakeSearch{results: []string{oldURL}}
+	got, err = ResolveMatch(context.Background(), sp, m)
+	if err != nil || got != oldURL {
+		t.Errorf("одна ссылка: got (%q, %v), want %q", got, err, oldURL)
+	}
+}
+
+func TestResolveMatchQueryIncludesDate(t *testing.T) {
+	sp := &fakeSearch{}
+	_, _ = ResolveMatch(context.Background(), sp, domain.Match{
+		ID: 1, TeamA: "G2", TeamB: "NAVI", Tournament: "IEM Cologne 2026",
+		Time: time.Date(2026, 8, 4, 15, 0, 0, 0, time.UTC),
+	})
+	want := "site:hltv.org/matches G2 vs NAVI IEM Cologne 2026 Aug 4"
+	if len(sp.queries) != 1 || sp.queries[0] != want {
+		t.Errorf("queries = %v, want %q", sp.queries, want)
+	}
+}
+
 func TestMatchURL(t *testing.T) {
 	m := domain.Match{
 		TeamA:      "Team Falcons",

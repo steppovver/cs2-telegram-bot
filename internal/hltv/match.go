@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -184,22 +185,59 @@ func ValidateMatchURL(candidate string, m domain.Match) (string, bool) {
 	return "https://www.hltv.org/matches/" + parts[1] + "/" + parts[2], true
 }
 
-// ResolveMatch ищет страницу матча. Пустая строка без ошибки — не нашли.
-func ResolveMatch(ctx context.Context, sp SearchProvider, m domain.Match) (string, error) {
-	query := "site:hltv.org/matches " + m.TeamA + " vs " + m.TeamB
-	if t := strings.TrimSpace(m.Tournament); t != "" {
-		query += " " + t
+// matchURLID — числовой id из канонического URL HLTV (/matches/<id>/...).
+// Неканонические строки дают 0.
+func matchURLID(u string) int64 {
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return 0
 	}
-	results, err := sp.Search(ctx, query)
+	parts := matchPathRe.FindStringSubmatch(parsed.Path)
+	if parts == nil {
+		return 0
+	}
+	id, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
+// matchSearchQuery — запрос к поисковику / Google «Мне повезёт».
+// Дата (Jan 2) сужает выдачу при повторных встречах тех же команд.
+func matchSearchQuery(m domain.Match) string {
+	q := "site:hltv.org/matches " + m.TeamA + " vs " + m.TeamB
+	if t := strings.TrimSpace(m.Tournament); t != "" {
+		q += " " + t
+	}
+	if !m.Time.IsZero() {
+		q += " " + m.Time.UTC().Format("Jan 2")
+	}
+	return q
+}
+
+// ResolveMatch ищет страницу матча. Пустая строка без ошибки — не нашли.
+// Среди страниц с тем же слагом берёт больший id HLTV: повторная встреча
+// той же пары на том же турнире получает новый id, а первая уже лежит
+// в кеше и в окно резолва обычно не попадает.
+func ResolveMatch(ctx context.Context, sp SearchProvider, m domain.Match) (string, error) {
+	results, err := sp.Search(ctx, matchSearchQuery(m))
 	if err != nil {
 		return "", fmt.Errorf("поиск страницы матча %d: %w", m.ID, err)
 	}
+	best, bestID := "", int64(0)
+	seen := make(map[string]bool)
 	for _, r := range results {
-		if u, ok := ValidateMatchURL(r, m); ok {
-			return u, nil
+		u, ok := ValidateMatchURL(r, m)
+		if !ok || seen[u] {
+			continue
+		}
+		seen[u] = true
+		if id := matchURLID(u); id >= bestID {
+			best, bestID = u, id
 		}
 	}
-	return "", nil
+	return best, nil
 }
 
 // googleLuckyURL строит ссылку на Google "Мне повезёт" (btnI=1):
@@ -216,14 +254,7 @@ func MatchURL(m domain.Match) string {
 	if m.HLTVURL != "" {
 		return m.HLTVURL
 	}
-	q := "site:hltv.org/matches " + m.TeamA + " vs " + m.TeamB
-	if t := strings.TrimSpace(m.Tournament); t != "" {
-		q += " " + t
-	}
-	if !m.Time.IsZero() {
-		q += " " + m.Time.UTC().Format("Jan 2")
-	}
-	return googleLuckyURL(q)
+	return googleLuckyURL(matchSearchQuery(m))
 }
 
 // EventURL строит ссылку на страницу турнира через Google "Мне повезёт".
