@@ -35,7 +35,7 @@ type Client struct {
 	statsMu   sync.Mutex
 	statsHour string
 	statsUsed int
-	// statsRemaining — минимальный остаток X-Rate-Limit-Remaining за час.
+	// statsRemaining — последний X-Rate-Limit-Remaining из ответа.
 	// -1 = ответов пока не было.
 	statsRemaining int
 }
@@ -54,16 +54,18 @@ func NewClient(apiKey string, rateLimit int) *Client {
 	}
 }
 
-// APIUsage возвращает статистику за текущий UTC-час: число запросов,
-// минимальный остаток лимита (-1 если ответов еще не было) и сам лимит.
+// APIUsage возвращает статистику: число запросов за текущий UTC-час
+// (локальный счётчик процесса), последний остаток лимита от сервера
+// (-1 если ответов еще не было) и сам лимит из конфига.
 func (c *Client) APIUsage() (used, remaining, limit int) {
 	c.statsMu.Lock()
 	defer c.statsMu.Unlock()
 	return c.statsUsed, c.statsRemaining, c.rateLimit
 }
 
-// noteResponse учитывает один HTTP-ответ: счетчик часа и заголовок
-// X-Rate-Limit-Remaining. Час — wall-clock UTC, как и сам лимит "в час".
+// noteResponse учитывает один HTTP-ответ: счётчик часа и заголовок
+// X-Rate-Limit-Remaining. Счётчик used — wall-clock UTC только для
+// локальной статистики; окно квоты API отдельное и момент сброса не публикует.
 func (c *Client) noteResponse(resp *http.Response) {
 	remaining := -1
 	if v := strings.TrimSpace(resp.Header.Get("X-Rate-Limit-Remaining")); v != "" {
@@ -81,7 +83,7 @@ func (c *Client) noteResponse(resp *http.Response) {
 		c.statsRemaining = -1
 	}
 	c.statsUsed++
-	if remaining >= 0 && (c.statsRemaining < 0 || remaining < c.statsRemaining) {
+	if remaining >= 0 {
 		c.statsRemaining = remaining
 	}
 }

@@ -174,8 +174,9 @@ func ValidateWebhook(cfg *Config) error {
 	return nil
 }
 
-// Интервалы опроса в секундах. Дефолты: поллер матчей — 60с, добор
-// завершенных — 900с. Нижние границы — от спама в PandaScore API.
+// Интервалы опроса в секундах. Дефолт poll — fallback живого поллера
+// (нет заголовка лимита / динамика выключена гистерезисом запаса);
+// добор завершенных — 900с. Нижние границы — от спама в PandaScore API.
 const (
 	DefaultPollIntervalSec         = 60
 	MinPollIntervalSec             = 15
