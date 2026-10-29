@@ -20,7 +20,7 @@ type Config struct {
 	DigestPresetHours []int             `json:"digest_preset_hours"`
 	AdminIDs          []int64           `json:"admin_ids"`
 	MaxStreams        int               `json:"max_streams_per_match"`
-	// Интервалы в секундах: 0 = дефолт (60 / 900).
+	// Интервалы в секундах: 0 = дефолт (60 / 120).
 	PollIntervalSec         int `json:"poll_interval_seconds"`
 	FinishedPollIntervalSec int `json:"finished_poll_interval_seconds"`
 	// Лимит REST-запросов PandaScore в час для варнингов: 0 = дефолт (1000).
@@ -176,12 +176,12 @@ func ValidateWebhook(cfg *Config) error {
 
 // Интервалы опроса в секундах. Дефолт poll — fallback живого поллера
 // (нет заголовка лимита / динамика выключена гистерезисом запаса);
-// добор завершенных — 900с. Нижние границы — от спама в PandaScore API.
+// добор завершенных — 120с. Нижние границы — от спама в PandaScore API.
 const (
 	DefaultPollIntervalSec         = 60
 	MinPollIntervalSec             = 15
 	MaxPollIntervalSec             = 3600
-	DefaultFinishedPollIntervalSec = 900
+	DefaultFinishedPollIntervalSec = 120
 	MinFinishedPollIntervalSec     = 60
 	MaxFinishedPollIntervalSec     = 86400
 )
