@@ -7,7 +7,7 @@
   "max_streams_per_match": 0,
   "poll_interval_seconds": 60,
   "finished_poll_interval_seconds": 120,
-  "api_rate_limit_per_hour": 1000,
+  "api_rate_limit_per_hour": 200,
   "search_provider": "ddg",
   "telegram_mode": "polling",
   "webhook_public_url": "",

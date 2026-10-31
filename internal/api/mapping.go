@@ -39,9 +39,13 @@ func mapPandaMatch(pm pandaMatch) (domain.Match, bool) {
 		Tournament:        mapPandaTournament(pm),
 		TournamentID:      pm.Serie.ID,
 		TournamentBeginAt: pm.Serie.BeginAt,
+		IsPlayoff:         isPlayoffStage(pm.Tournament.Name, pm.Tournament.HasBracket),
 	}
 	if pm.EndAt != nil && !pm.EndAt.IsZero() {
 		m.EndAt = *pm.EndAt
+	}
+	if pm.Serie.EndAt != nil && !pm.Serie.EndAt.IsZero() {
+		m.TournamentEndAt = *pm.Serie.EndAt
 	}
 	m.Results = mapPandaResults(pm.Results)
 	m.Games = mapPandaGames(pm.Games)
@@ -71,6 +75,24 @@ func mapPandaTournament(pm pandaMatch) string {
 		parts = append(parts, s)
 	}
 	return strings.Join(parts, " ")
+}
+
+// isPlayoffStage решает по стадии PandaScore, плей-офф ли это. Название
+// важнее has_bracket: бывают групповые стадии с сеткой (GSL-группы).
+// Отрицательные маркеры проверяются первыми ("Play-in Playoffs" — не плей-офф).
+func isPlayoffStage(name string, hasBracket bool) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	for _, s := range []string{"group", "swiss", "play-in", "playin", "qualif", "open"} {
+		if strings.Contains(n, s) {
+			return false
+		}
+	}
+	for _, s := range []string{"playoff", "play-off", "knockout", "bracket", "final"} {
+		if strings.Contains(n, s) {
+			return true
+		}
+	}
+	return hasBracket
 }
 
 // mapPandaTeams достает пару команд. API не гарантирует порядок opponents,

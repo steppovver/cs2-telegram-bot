@@ -92,20 +92,33 @@ func (c *Client) noteResponse(resp *http.Response) {
 // новых строк с query-параметрами в коде нет: новый статус для postponed —
 // просто элемент Statuses.
 type matchesQuery struct {
-	OpponentIDs []string
-	Statuses    []string
-	Sort        string
+	// Filter — поле фильтра по ID: filterOpponent или filterSerie.
+	Filter   string
+	IDs      []string
+	Statuses []string
+	Sort     string
 	// Since ограничивает окно слева: матч старше — стоп, остаток страниц
 	// тоже старый. Работает только с сортировкой от новых к старым.
 	// nil = без ограничения.
 	Since *time.Time
 }
 
+const (
+	filterOpponent = "opponent_id"
+	filterSerie    = "serie_id"
+)
+
+var (
+	upcomingStatuses = []string{"not_started", "running", "postponed"}
+	finishedStatuses = []string{"finished"}
+)
+
 // url собирает URL страницы из фильтра.
 func (q matchesQuery) url(page int) string {
-	return fmt.Sprintf("%s?filter[opponent_id]=%s&filter[status]=%s&sort=%s&per_page=%d&page=%d",
+	return fmt.Sprintf("%s?filter[%s]=%s&filter[status]=%s&sort=%s&per_page=%d&page=%d",
 		matchesAPI,
-		strings.Join(q.OpponentIDs, ","),
+		q.Filter,
+		strings.Join(q.IDs, ","),
 		strings.Join(q.Statuses, ","),
 		q.Sort,
 		matchesPerPage,
@@ -114,9 +127,10 @@ func (q matchesQuery) url(page int) string {
 
 func (c *Client) FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string) ([]domain.Match, error) {
 	return c.queryMatches(ctx, matchesQuery{
-		OpponentIDs: teamIDs,
-		Statuses:    []string{"not_started", "running", "postponed"},
-		Sort:        "begin_at",
+		Filter:   filterOpponent,
+		IDs:      teamIDs,
+		Statuses: upcomingStatuses,
+		Sort:     "begin_at",
 	})
 }
 
@@ -125,29 +139,52 @@ func (c *Client) FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string) ([
 // страницы за окно.
 func (c *Client) FetchFinishedMatchesByTeamIDs(ctx context.Context, teamIDs []string, since time.Time) ([]domain.Match, error) {
 	return c.queryMatches(ctx, matchesQuery{
-		OpponentIDs: teamIDs,
-		Statuses:    []string{"finished"},
-		Sort:        "-begin_at",
-		Since:       &since,
+		Filter:   filterOpponent,
+		IDs:      teamIDs,
+		Statuses: finishedStatuses,
+		Sort:     "-begin_at",
+		Since:    &since,
 	})
 }
 
-// queryMatches выполняет запрос по фильтру: чанкует команды (один матч может
+// FetchMatchesBySerieIDs забирает предстоящие и идущие матчи серий
+// (все стадии; плей-офф отбирает вызывающий по Match.IsPlayoff).
+func (c *Client) FetchMatchesBySerieIDs(ctx context.Context, serieIDs []string) ([]domain.Match, error) {
+	return c.queryMatches(ctx, matchesQuery{
+		Filter:   filterSerie,
+		IDs:      serieIDs,
+		Statuses: upcomingStatuses,
+		Sort:     "begin_at",
+	})
+}
+
+// FetchFinishedMatchesBySerieIDs — завершенные матчи серий за окно [since, now].
+func (c *Client) FetchFinishedMatchesBySerieIDs(ctx context.Context, serieIDs []string, since time.Time) ([]domain.Match, error) {
+	return c.queryMatches(ctx, matchesQuery{
+		Filter:   filterSerie,
+		IDs:      serieIDs,
+		Statuses: finishedStatuses,
+		Sort:     "-begin_at",
+		Since:    &since,
+	})
+}
+
+// queryMatches выполняет запрос по фильтру: чанкует ID (один матч может
 // попасть в несколько чанков через общего соперника — дедуп по ID),
 // листает страницы чанка до конца данных или выхода за окно Since.
 func (c *Client) queryMatches(ctx context.Context, q matchesQuery) ([]domain.Match, error) {
-	if len(q.OpponentIDs) == 0 {
+	if len(q.IDs) == 0 {
 		return nil, nil
 	}
 
 	merged := make(map[int]domain.Match)
-	for start := 0; start < len(q.OpponentIDs); start += teamIDsPerRequest {
+	for start := 0; start < len(q.IDs); start += teamIDsPerRequest {
 		end := start + teamIDsPerRequest
-		if end > len(q.OpponentIDs) {
-			end = len(q.OpponentIDs)
+		if end > len(q.IDs) {
+			end = len(q.IDs)
 		}
 		chunk := q
-		chunk.OpponentIDs = q.OpponentIDs[start:end]
+		chunk.IDs = q.IDs[start:end]
 		if err := c.queryChunk(ctx, chunk, merged); err != nil {
 			return nil, err
 		}

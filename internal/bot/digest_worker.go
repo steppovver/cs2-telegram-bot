@@ -64,7 +64,11 @@ func (b *Bot) runDigestCycle(ctx context.Context) {
 // Пустой результат тоже фиксирует как отправленный, чтобы не дергать БД весь час.
 // Возвращает true, если дайджест с матчами поставлен в очередь.
 func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int, until time.Time, slot string) bool {
-	live, upcoming, err := b.storage.GetScheduleMatches(userID, until.Unix())
+	showAll, err := b.storage.GetTournamentView(userID)
+	if err != nil {
+		slog.Error("Ошибка получения режима турнирных матчей", slog.Int64("user_id", userID), slog.Any("error", err))
+	}
+	live, upcoming, err := b.storage.GetScheduleMatches(userID, until.Unix(), showAll)
 	if err != nil {
 		slog.Error("Ошибка получения матчей для дайджеста", slog.Int64("user_id", userID), slog.Any("error", err))
 		return false

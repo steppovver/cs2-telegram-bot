@@ -16,8 +16,8 @@ import (
 type Storage interface {
 	GetUserSubscriptions(userID int64) ([]domain.TeamInfo, error)
 	GetSubscribedTeamIDs() ([]string, error)
-	GetScheduleMatches(userID int64, untilUnix int64) (live, upcoming []domain.Match, err error)
-	GetScoreMatches(userID int64) ([]domain.Match, error)
+	GetScheduleMatches(userID int64, untilUnix int64, withTournaments bool) (live, upcoming []domain.Match, err error)
+	GetScoreMatches(userID int64, withTournaments bool) ([]domain.Match, error)
 	GetMatchesForReminder() ([]domain.Match, error)
 	GetUsersByTeamIDs(teamAID, teamBID int) ([]int64, error)
 	ProcessMatch(m domain.Match) (domain.MatchChange, error)
@@ -40,11 +40,22 @@ type Storage interface {
 	MarkDigestSent(userID int64, date string) error
 	GetHLTVURLs(matchIDs []int) (map[int]string, error)
 	FillStreamChannels(matches []domain.Match)
+	GetTournamentsForUser(userID int64) ([]domain.TournamentInfo, error)
+	SubscribeTournament(userID int64, tournamentID int) error
+	UnsubscribeTournament(userID int64, tournamentID int) error
+	HasTournamentSubscriptions(userID int64) (bool, error)
+	GetUsersByTournamentID(tournamentID int) ([]int64, error)
+	GetActiveSubscribedTournamentIDs() ([]string, error)
+	GetTournamentView(userID int64) (bool, error)
+	SetTournamentView(userID int64, showAll bool) error
+	CleanFinishedTournaments()
 }
 
 type PandaClient interface {
 	FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string) ([]domain.Match, error)
 	FetchFinishedMatchesByTeamIDs(ctx context.Context, teamIDs []string, since time.Time) ([]domain.Match, error)
+	FetchMatchesBySerieIDs(ctx context.Context, serieIDs []string) ([]domain.Match, error)
+	FetchFinishedMatchesBySerieIDs(ctx context.Context, serieIDs []string, since time.Time) ([]domain.Match, error)
 	// APIUsage: запросов за текущий UTC-час (локальный счётчик), последний
 	// остаток лимита (-1 если ответов еще не было) и лимит в час из конфига.
 	APIUsage() (used, remaining, limit int)
@@ -71,11 +82,12 @@ type Bot struct {
 
 	broadcastCh chan BroadcastTask
 
-	mainMenu     *telebot.ReplyMarkup
-	btnSchedule  telebot.Btn
-	btnScore     telebot.Btn
-	btnSubscribe telebot.Btn
-	btnDigest    telebot.Btn
+	mainMenu       *telebot.ReplyMarkup
+	btnSchedule    telebot.Btn
+	btnScore       telebot.Btn
+	btnSubscribe   telebot.Btn
+	btnTournaments telebot.Btn
+	btnDigest      telebot.Btn
 
 	awaitingHour   map[int64]bool
 	awaitingHourMu sync.Mutex
@@ -116,27 +128,28 @@ func New(b *telebot.Bot, s Storage, p PandaClient, defaultTeams []domain.TeamInf
 		admins[id] = true
 	}
 	botApp := &Bot{
-		telebot:      b,
-		storage:      s,
-		panda:        p,
-		defaultTeams: defaultTeams,
-		digestHours:  config.NormalizeDigestHours(digestPresetHours),
-		maxStreams:   config.NormalizeMaxStreams(maxStreams),
-		admins:       admins,
-		awaitingHour: make(map[int64]bool),
-		awaitingTZ:   make(map[int64]bool),
-		broadcastCh:  make(chan BroadcastTask, 10000),
-		mainMenu:     menu,
-		btnSchedule:  menu.Text("📅 Узнать расписание"),
-		btnScore:     menu.Text("📊 Счет матчей"),
-		btnSubscribe: menu.Text("🔔 Подписки на команды"),
-		btnDigest:    menu.Text("⏰ Дайджест"),
+		telebot:        b,
+		storage:        s,
+		panda:          p,
+		defaultTeams:   defaultTeams,
+		digestHours:    config.NormalizeDigestHours(digestPresetHours),
+		maxStreams:     config.NormalizeMaxStreams(maxStreams),
+		admins:         admins,
+		awaitingHour:   make(map[int64]bool),
+		awaitingTZ:     make(map[int64]bool),
+		broadcastCh:    make(chan BroadcastTask, 10000),
+		mainMenu:       menu,
+		btnSchedule:    menu.Text("📅 Узнать расписание"),
+		btnScore:       menu.Text("📊 Счет матчей"),
+		btnSubscribe:   menu.Text("🔔 Подписки на команды"),
+		btnTournaments: menu.Text("🏆 Подписки на турниры"),
+		btnDigest:      menu.Text("⏰ Дайджест"),
 	}
 
 	botApp.mainMenu.Reply(
 		botApp.mainMenu.Row(botApp.btnSchedule),
 		botApp.mainMenu.Row(botApp.btnScore),
-		botApp.mainMenu.Row(botApp.btnSubscribe),
+		botApp.mainMenu.Row(botApp.btnSubscribe, botApp.btnTournaments),
 		botApp.mainMenu.Row(botApp.btnDigest),
 	)
 
@@ -152,9 +165,12 @@ func (b *Bot) RegisterHandlers() {
 	b.telebot.Handle(&b.btnSchedule, b.handleSchedule)
 	b.telebot.Handle(&b.btnScore, b.handleScore)
 	b.telebot.Handle(&b.btnSubscribe, b.handleSubscribe)
+	b.telebot.Handle(&b.btnTournaments, b.handleTournamentsMenu)
 	b.telebot.Handle(&b.btnDigest, b.handleDigestMenu)
 	b.telebot.Handle(telebot.OnText, b.handleTextSearch)
 	b.telebot.Handle("\fsub_", b.handleToggleSub)
+	b.telebot.Handle("\ftsub", b.handleTournamentCallback)
+	b.telebot.Handle("\fview", b.handleViewCallback)
 	b.telebot.Handle("\fdigest", b.handleDigestCallback)
 	b.telebot.Handle("\fadmin", b.handleAdminCallback)
 }
