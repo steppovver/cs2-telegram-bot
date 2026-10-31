@@ -13,7 +13,23 @@ import (
 
 // matchSelectCols — общий набор колонок для выборок domain.Match.
 // JOIN tournaments t обязателен у вызывающего запроса.
-const matchSelectCols = `m.id, m.team_a, m.team_b, m.begin_at, COALESCE(m.end_at, 0), m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.streams_json, '[]'), COALESCE(m.score_json, '[]'), m.tournament_id, COALESCE(t.name, ''), COALESCE(t.begin_at, 0), m.hltv_url`
+const matchSelectCols = `m.id, m.team_a, m.team_b, m.begin_at, COALESCE(m.end_at, 0), m.team_a_id, m.team_b_id, COALESCE(m.status, ''), COALESCE(m.streams_json, '[]'), COALESCE(m.score_json, '[]'), m.tournament_id, COALESCE(t.name, ''), COALESCE(t.begin_at, 0), m.hltv_url, m.is_playoff, COALESCE(t.end_at, 0)`
+
+// userMatchFilter — матчи пользователя: его команды, а при включенном
+// флаге еще и плей-офф подписанных турниров.
+// Параметры: user_id, withTournaments (0/1), user_id.
+const userMatchFilter = `(
+	EXISTS (SELECT 1 FROM subscriptions s WHERE s.user_id = ? AND s.team_id IN (m.team_a_id, m.team_b_id))
+	OR (? = 1 AND m.is_playoff = 1 AND EXISTS (
+		SELECT 1 FROM tournament_subscriptions ts WHERE ts.user_id = ? AND ts.tournament_id = m.tournament_id))
+)`
+
+func boolInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
 
 // encodeStreams сериализует весь список стримов в JSON для колонки streams_json.
 // Лимит max_streams_per_match применяется при рендере, а не в БД, чтобы смена
@@ -103,12 +119,15 @@ func endAtUnix(t time.Time) int64 {
 // fillTournament переносит данные JOIN-строки tournaments в матч.
 // Нет строки (id=0) — поля остаются пустыми, рендер положит матч
 // в корзину "Прочие".
-func fillTournament(m *domain.Match, name sql.NullString, beginUnix int64) {
+func fillTournament(m *domain.Match, name sql.NullString, beginUnix, endUnix int64) {
 	if name.Valid {
 		m.Tournament = name.String
 	}
 	if beginUnix > 0 {
 		m.TournamentBeginAt = time.Unix(beginUnix, 0)
+	}
+	if endUnix > 0 {
+		m.TournamentEndAt = time.Unix(endUnix, 0)
 	}
 }
 
@@ -119,11 +138,13 @@ func scanMatchRow(rows *sql.Rows) (domain.Match, error) {
 	var teamAID, teamBID sql.NullInt64
 	var status string
 	var streamsRaw, scoreRaw, tournamentName sql.NullString
-	var tournamentBegin int64
+	var tournamentBegin, tournamentEnd int64
+	var isPlayoff int
 	if err := rows.Scan(
 		&m.ID, &m.TeamA, &m.TeamB, &unixTime, &endUnix,
 		&teamAID, &teamBID, &status, &streamsRaw, &scoreRaw,
 		&m.TournamentID, &tournamentName, &tournamentBegin, &m.HLTVURL,
+		&isPlayoff, &tournamentEnd,
 	); err != nil {
 		return domain.Match{}, err
 	}
@@ -136,7 +157,8 @@ func scanMatchRow(rows *sql.Rows) (domain.Match, error) {
 	m.Status = status
 	m.Streams = decodeStreams(streamsRaw)
 	decodeScore(scoreRaw, &m)
-	fillTournament(&m, tournamentName, tournamentBegin)
+	fillTournament(&m, tournamentName, tournamentBegin, tournamentEnd)
+	m.IsPlayoff = isPlayoff != 0
 	return m, nil
 }
 
@@ -151,10 +173,23 @@ func (s *Storage) ProcessMatch(m domain.Match) (domain.MatchChange, error) {
 	// в matches только ключ. Без serie (id=0) — пропускаем, матч
 	// ляжет в корзину "Прочие".
 	if m.TournamentID != 0 {
-		if _, err := tx.Exec(`INSERT INTO tournaments (id, name, begin_at, updated_at) VALUES (?, ?, ?, ?)
-			ON CONFLICT(id) DO UPDATE SET name = excluded.name, begin_at = excluded.begin_at, updated_at = excluded.updated_at`,
-			m.TournamentID, m.Tournament, endAtUnix(m.TournamentBeginAt), time.Now().Unix()); err != nil {
+		if _, err := tx.Exec(`INSERT INTO tournaments (id, name, begin_at, end_at, updated_at) VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET name = excluded.name, begin_at = excluded.begin_at,
+				end_at = CASE WHEN excluded.end_at > 0 THEN excluded.end_at ELSE tournaments.end_at END,
+				updated_at = excluded.updated_at`,
+			m.TournamentID, m.Tournament, endAtUnix(m.TournamentBeginAt), endAtUnix(m.TournamentEndAt), time.Now().Unix()); err != nil {
 			return domain.MatchChange{}, err
+		}
+		// Связь переживает CleanOldMatches: по ней меню турниров находит
+		// серии, где команда уже вылетела.
+		for _, teamID := range []int{m.TeamAID, m.TeamBID} {
+			if teamID == 0 {
+				continue
+			}
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO tournament_teams (tournament_id, team_id) VALUES (?, ?)`,
+				m.TournamentID, teamID); err != nil {
+				return domain.MatchChange{}, err
+			}
 		}
 	}
 
@@ -173,8 +208,8 @@ func (s *Storage) ProcessMatch(m domain.Match) (domain.MatchChange, error) {
 			slog.Int64("begin_at", m.Time.Unix()),
 		)
 		_, err = tx.Exec(
-			`INSERT INTO matches (id, team_a, team_b, team_a_id, team_b_id, begin_at, end_at, status, streams_json, score_json, tournament_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			m.ID, m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Time.Unix(), endAtUnix(m.EndAt), m.Status, encodeStreams(m.Streams), encodeScore(m), m.TournamentID,
+			`INSERT INTO matches (id, team_a, team_b, team_a_id, team_b_id, begin_at, end_at, status, streams_json, score_json, tournament_id, is_playoff) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			m.ID, m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Time.Unix(), endAtUnix(m.EndAt), m.Status, encodeStreams(m.Streams), encodeScore(m), m.TournamentID, boolInt(m.IsPlayoff),
 		)
 		if err != nil {
 			return domain.MatchChange{}, err
@@ -225,11 +260,11 @@ func (s *Storage) ProcessMatch(m domain.Match) (domain.MatchChange, error) {
 	}
 
 	_, err = tx.Exec(
-		`UPDATE matches SET begin_at = ?, end_at = ?, team_a = ?, team_b = ?, team_a_id = ?, team_b_id = ?, status = ?, notified = ?, streams_json = ?, score_json = ?, tournament_id = ?,
+		`UPDATE matches SET begin_at = ?, end_at = ?, team_a = ?, team_b = ?, team_a_id = ?, team_b_id = ?, status = ?, notified = ?, streams_json = ?, score_json = ?, tournament_id = ?, is_playoff = ?,
 			hltv_url = CASE WHEN ? = 1 THEN '' ELSE hltv_url END,
 			hltv_checked_at = CASE WHEN ? = 1 THEN 0 ELSE hltv_checked_at END
 		WHERE id = ?`,
-		m.Time.Unix(), endAtUnix(m.EndAt), m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Status, newNotified, encodeStreams(m.Streams), encodeScore(m), m.TournamentID,
+		m.Time.Unix(), endAtUnix(m.EndAt), m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Status, newNotified, encodeStreams(m.Streams), encodeScore(m), m.TournamentID, boolInt(m.IsPlayoff),
 		resetHLTV, resetHLTV, m.ID,
 	)
 	if err != nil {
@@ -250,20 +285,20 @@ func sameTeamPair(a1, b1, a2, b2 string) bool {
 
 // GetScheduleMatches возвращает live и предстоящие матчи пользователя одним запросом.
 // untilUnix — правая граница для upcoming (begin_at <= untilUnix); 0 = без границы.
-// Live (status=running) в окно не режется.
-func (s *Storage) GetScheduleMatches(userID int64, untilUnix int64) (live, upcoming []domain.Match, err error) {
+// Live (status=running) в окно не режется. withTournaments добавляет
+// плей-офф матчи подписанных турниров.
+func (s *Storage) GetScheduleMatches(userID int64, untilUnix int64, withTournaments bool) (live, upcoming []domain.Match, err error) {
 	nowUnix := time.Now().Unix()
 	rows, err := s.db.Query(`
-		SELECT DISTINCT `+matchSelectCols+`
+		SELECT `+matchSelectCols+`
 		FROM matches m
 		LEFT JOIN tournaments t ON t.id = m.tournament_id
-		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
-		WHERE s.user_id = ? AND (
+		WHERE `+userMatchFilter+` AND (
 			(m.begin_at <= ? AND m.status = 'running')
 			OR (m.begin_at > ? AND (? = 0 OR m.begin_at <= ?))
 		)
 		ORDER BY m.begin_at ASC
-	`, userID, nowUnix, nowUnix, untilUnix, untilUnix)
+	`, userID, boolInt(withTournaments), userID, nowUnix, nowUnix, untilUnix, untilUnix)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -293,16 +328,16 @@ func (s *Storage) GetScheduleMatches(userID int64, untilUnix int64) (live, upcom
 
 // GetScoreMatches возвращает матчи со счетом для кнопки 📊: идущие сейчас
 // и завершенные (finished + локальный post_match). Только из БД, без API.
-// not_started сюда не попадают — счета у них нет.
-func (s *Storage) GetScoreMatches(userID int64) ([]domain.Match, error) {
+// not_started сюда не попадают — счета у них нет. withTournaments — как
+// в GetScheduleMatches.
+func (s *Storage) GetScoreMatches(userID int64, withTournaments bool) ([]domain.Match, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT `+matchSelectCols+`
+		SELECT `+matchSelectCols+`
 		FROM matches m
 		LEFT JOIN tournaments t ON t.id = m.tournament_id
-		INNER JOIN subscriptions s ON s.team_id IN (m.team_a_id, m.team_b_id)
-		WHERE s.user_id = ? AND m.status IN ('running', 'finished', 'post_match')
+		WHERE `+userMatchFilter+` AND m.status IN ('running', 'finished', 'post_match')
 		ORDER BY m.begin_at ASC
-	`, userID)
+	`, userID, boolInt(withTournaments), userID)
 	if err != nil {
 		return nil, err
 	}

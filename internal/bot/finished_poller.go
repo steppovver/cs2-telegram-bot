@@ -44,14 +44,27 @@ func (b *Bot) runFinishedCycle(ctx context.Context) {
 		slog.Error("Ошибка получения ID команд из БД", slog.Any("error", err))
 		return
 	}
-	if len(idsToFetch) == 0 {
+	serieIDs, err := b.storage.GetActiveSubscribedTournamentIDs()
+	if err != nil {
+		slog.Error("Ошибка получения подписанных турниров из БД", slog.Any("error", err))
+	}
+	if len(idsToFetch) == 0 && len(serieIDs) == 0 {
 		return
 	}
 
-	matches, err := b.panda.FetchFinishedMatchesByTeamIDs(ctx, idsToFetch, time.Now().Add(-finishedPollWindow))
+	since := time.Now().Add(-finishedPollWindow)
+	matches, err := b.panda.FetchFinishedMatchesByTeamIDs(ctx, idsToFetch, since)
 	if err != nil {
 		slog.Error("Ошибка запроса завершенных матчей из API", slog.Any("error", err))
 		return
+	}
+	if len(serieIDs) > 0 {
+		serieMatches, err := b.panda.FetchFinishedMatchesBySerieIDs(ctx, serieIDs, since)
+		if err != nil {
+			slog.Error("Ошибка запроса завершенных матчей турниров из API", slog.Any("error", err))
+		} else {
+			matches = mergePlayoffMatches(matches, serieMatches)
+		}
 	}
 
 	for _, match := range matches {

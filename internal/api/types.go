@@ -51,6 +51,14 @@ type pandaMatch struct {
 	Opponents         []pandaOpponent `json:"opponents"`
 	League            pandaLeague     `json:"league"`
 	Serie             pandaSerie      `json:"serie"`
+	Tournament        pandaStage      `json:"tournament"`
+}
+
+// pandaStage — стадия внутри серии ("Group Stage", "Playoffs").
+// В PandaScore она называется tournament, в боте турнир — это serie.
+type pandaStage struct {
+	Name       string `json:"name"`
+	HasBracket bool   `json:"has_bracket"`
 }
 
 type pandaLeague struct {
@@ -58,7 +66,8 @@ type pandaLeague struct {
 }
 
 type pandaSerie struct {
-	ID       int       `json:"id"`
-	FullName string    `json:"full_name"`
-	BeginAt  time.Time `json:"begin_at"`
+	ID       int        `json:"id"`
+	FullName string     `json:"full_name"`
+	BeginAt  time.Time  `json:"begin_at"`
+	EndAt    *time.Time `json:"end_at"`
 }

@@ -1,0 +1,266 @@
+[
+  {
+    "original_scheduled_at": "2026-10-31T11:00:00Z",
+    "winner_type": "Team",
+    "results": [
+      {
+        "team_id": 124522,
+        "score": 0
+      },
+      {
+        "team_id": 124530,
+        "score": 0
+      }
+    ],
+    "tournament_id": 22228,
+    "draw": false,
+    "game_advantage": null,
+    "forfeit": false,
+    "rescheduled": false,
+    "modified_at": "2026-10-31T07:54:39Z",
+    "serie_id": 11118,
+    "scheduled_at": "2026-10-31T11:00:00Z",
+    "league": {
+      "id": 5442,
+      "name": "PGL Masters",
+      "url": null,
+      "slug": "cs-go-pgl-masters",
+      "modified_at": "2025-10-18T17:56:00Z",
+      "image_url": "https://cdn-api.pandascore.co/images/league/image/5442/pgl_masters_bucharest_2025_allmode-png"
+    },
+    "winner_id": null,
+    "match_type": "best_of",
+    "status": "not_started",
+    "winner": null,
+    "slug": "nemiga-2026-10-31",
+    "tournament": {
+      "id": 22228,
+      "name": "Playoffs",
+      "type": "offline",
+      "country": "RO",
+      "begin_at": "2026-10-29T08:00:00Z",
+      "detailed_stats": true,
+      "end_at": "2026-10-31T16:00:00Z",
+      "winner_id": null,
+      "winner_type": "Team",
+      "slug": "cs-go-pgl-masters-bucharest-2026-playoffs",
+      "region": "EEU",
+      "serie_id": 11118,
+      "modified_at": "2026-10-29T09:27:33Z",
+      "league_id": 5442,
+      "prizepool": "1,250,000 United States Dollar",
+      "tier": "a",
+      "has_bracket": true,
+      "live_supported": true
+    },
+    "games": [
+      {
+        "complete": false,
+        "id": 236072,
+        "position": 1,
+        "status": "not_started",
+        "length": null,
+        "finished": false,
+        "begin_at": null,
+        "detailed_stats": true,
+        "end_at": null,
+        "forfeit": false,
+        "match_id": 1753690,
+        "winner_type": "Team",
+        "winner": {
+          "id": null,
+          "type": "Team"
+        }
+      },
+      {
+        "complete": false,
+        "id": 236073,
+        "position": 2,
+        "status": "not_started",
+        "length": null,
+        "finished": false,
+        "begin_at": null,
+        "detailed_stats": true,
+        "end_at": null,
+        "forfeit": false,
+        "match_id": 1753690,
+        "winner_type": "Team",
+        "winner": {
+          "id": null,
+          "type": "Team"
+        }
+      },
+      {
+        "complete": false,
+        "id": 236074,
+        "position": 3,
+        "status": "not_started",
+        "length": null,
+        "finished": false,
+        "begin_at": null,
+        "detailed_stats": true,
+        "end_at": null,
+        "forfeit": false,
+        "match_id": 1753690,
+        "winner_type": "Team",
+        "winner": {
+          "id": null,
+          "type": "Team"
+        }
+      },
+      {
+        "complete": false,
+        "id": 236075,
+        "position": 4,
+        "status": "not_started",
+        "length": null,
+        "finished": false,
+        "begin_at": null,
+        "detailed_stats": true,
+        "end_at": null,
+        "forfeit": false,
+        "match_id": 1753690,
+        "winner_type": "Team",
+        "winner": {
+          "id": null,
+          "type": "Team"
+        }
+      },
+      {
+        "complete": false,
+        "id": 236076,
+        "position": 5,
+        "status": "not_started",
+        "length": null,
+        "finished": false,
+        "begin_at": null,
+        "detailed_stats": true,
+        "end_at": null,
+        "forfeit": false,
+        "match_id": 1753690,
+        "winner_type": "Team",
+        "winner": {
+          "id": null,
+          "type": "Team"
+        }
+      }
+    ],
+    "detailed_stats": true,
+    "live": {
+      "supported": true,
+      "url": "wss://live.pandascore.co/matches/1753690",
+      "opens_at": "2026-10-31T10:45:00.000000Z"
+    },
+    "serie": {
+      "id": 11118,
+      "name": "Bucharest",
+      "year": 2026,
+      "begin_at": "2026-10-24T07:00:00Z",
+      "end_at": "2026-10-31T16:00:00Z",
+      "winner_id": null,
+      "winner_type": "Team",
+      "slug": "cs-go-pgl-masters-bucharest-2026",
+      "modified_at": "2026-10-16T17:04:02Z",
+      "league_id": 5442,
+      "season": null,
+      "full_name": "Bucharest 2026"
+    },
+    "videogame_title": {
+      "id": 13,
+      "name": "Counter-Strike 2",
+      "slug": "cs-2",
+      "videogame_id": 3
+    },
+    "league_id": 5442,
+    "streams_list": [
+      {
+        "main": false,
+        "language": "de",
+        "embed_url": "https://player.twitch.tv/?channel=zonixxcs",
+        "official": false,
+        "raw_url": "https://www.twitch.tv/zonixxcs"
+      },
+      {
+        "main": false,
+        "language": "pl",
+        "embed_url": "https://player.twitch.tv/?channel=izakooo",
+        "official": false,
+        "raw_url": "https://www.twitch.tv/izakooo"
+      },
+      {
+        "main": false,
+        "language": "fr",
+        "embed_url": "https://player.twitch.tv/?channel=krl_stream",
+        "official": false,
+        "raw_url": "https://www.twitch.tv/krl_stream"
+      },
+      {
+        "main": false,
+        "language": "ru",
+        "embed_url": "https://player.twitch.tv/?channel=cs2_paragon_ru",
+        "official": false,
+        "raw_url": "https://www.twitch.tv/cs2_paragon_ru"
+      },
+      {
+        "main": false,
+        "language": "pt",
+        "embed_url": "https://player.kick.com/gaules",
+        "official": false,
+        "raw_url": "https://kick.com/gaules"
+      },
+      {
+        "main": false,
+        "language": "en",
+        "embed_url": "https://www.youtube.com/embed/DTnENvX1JV0",
+        "official": false,
+        "raw_url": "https://www.youtube.com/watch?v=DTnENvX1JV0"
+      },
+      {
+        "main": true,
+        "language": "en",
+        "embed_url": "https://player.twitch.tv/?channel=PGL",
+        "official": true,
+        "raw_url": "https://www.twitch.tv/PGL"
+      }
+    ],
+    "opponents": [
+      {
+        "type": "Team",
+        "opponent": {
+          "id": 124522,
+          "name": "Nemiga",
+          "location": "BY",
+          "slug": "nemiga",
+          "modified_at": "2026-10-28T16:19:45Z",
+          "acronym": "NEMI",
+          "image_url": "https://cdn-api.pandascore.co/images/team/image/124522/NEMIGA.png",
+          "dark_mode_image_url": null
+        }
+      },
+      {
+        "type": "Team",
+        "opponent": {
+          "id": 124530,
+          "name": "FURIA",
+          "location": "BR",
+          "slug": "furia",
+          "modified_at": "2026-10-28T15:43:46Z",
+          "acronym": "FURIA",
+          "image_url": "https://cdn-api.pandascore.co/images/team/image/124530/8297.png",
+          "dark_mode_image_url": null
+        }
+      }
+    ],
+    "end_at": null,
+    "number_of_games": 5,
+    "id": 1753690,
+    "name": "Grand final: NEMI vs FURIA",
+    "begin_at": "2026-10-31T11:00:00Z",
+    "videogame": {
+      "id": 3,
+      "name": "Counter-Strike",
+      "slug": "cs-go"
+    },
+    "videogame_version": null
+  }
+]

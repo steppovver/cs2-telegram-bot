@@ -34,6 +34,7 @@ Cursor и OpenCode правят один и тот же репозиторий �
 - `internal/api/` — клиент PandaScore: `client.go` (чанки, ретраи, пагинация, учет лимита запросов), `types.go`, `mapping.go`
 - `internal/bot/` — Telegram-слой:
   - `handlers.go`, `digest_handler.go`, `score_handler.go`, `admin.go` — хендлеры и админка (`/admin`, `/version`)
+ - `tournament_subs.go` — меню подписок на турниры (только плей-офф), режим по умолчанию и кнопка показать/скрыть турнирные матчи под расписанием и счетом
   - `poller.go`, `pace.go` — опрос предстоящих/live матчей с динамическим темпом; `finished_poller.go` — добор завершенных для кнопки `📊`
   - `reminders.go` — напоминания за 5 минут; `digest_worker.go` — ежедневный дайджест
   - `broadcaster.go` — очередь рассылки (~25 msg/sec, чистка заблокировавших, пауза по FloodWait)
@@ -44,9 +45,9 @@ Cursor и OpenCode правят один и тот же репозиторий �
 - `internal/youtube/` — oEmbed-резолвер имен YouTube-каналов (`resolver.go`, `oembed.go`, `videoid.go`), окно `[-6h, +48h]`, кеш в `stream_channels`
 - `internal/config/` — `config.go`: загрузка и нормализация `config.json` (дефолты: `poll 60s` как fallback живого поллера, `finished_poll 120s`, `api_rate_limit 1000`, `search_provider ddg`, `telegram_mode polling`, `webhook_listen 127.0.0.1:18090`, `digest_preset_hours [9,10,11,12]`, `max_streams 0=all, cap 10`)
 - `internal/domain/` — `models.go`: `Match`, `MatchChange`, `MatchStream`, `TeamInfo`, `DigestSettings` и др.
-- `internal/storage/` — SQLite: `sqlite.go` (схема, миграции), `matches.go`, `subscriptions.go`, `settings.go`, `streams.go` (кеш `stream_channels`)
+- `internal/storage/` — SQLite: `sqlite.go` (схема, миграции), `matches.go`, `subscriptions.go`, `settings.go`, `streams.go` (кеш `stream_channels`), `tournament_subs.go` (`tournament_teams`, `tournament_subscriptions`, чистка закончившихся турниров)
 - `deploy/` — упаковка `.deb` (`nfpm.yaml`, `build-deb.sh`, `debian/{preinst,postinst,prerm,postrm}`), systemd-юниты (`cs2bot.service`, `cs2bot-teams-puller.{service,timer}`, `cs2bot-backup.{service,timer}`), `cs2bot-backup` (онлайн-бэкап SQLite), `deploy.sh` (сборка + `apt install` на сервер), `Caddyfile.cs2bot.example` (webhook за Caddy)
-- Прочее: `api-examples/` (пример ответа PandaScore), `config_example.json`, `.env.example` (переменные для `deploy.sh`)
+- Прочее: `api-examples/` (примеры ответов PandaScore: групповой матч и финал плей-офф), `config_example.json`, `.env.example` (переменные для `deploy.sh`)
 
 ### Раскладка пакета на сервере
 

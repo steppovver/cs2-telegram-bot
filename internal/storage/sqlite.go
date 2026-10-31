@@ -78,6 +78,19 @@ CREATE TABLE IF NOT EXISTS stream_channels (
 	checked_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_stream_channels_checked_at ON stream_channels(checked_at);
+CREATE TABLE IF NOT EXISTS tournament_teams (
+	tournament_id INTEGER NOT NULL,
+	team_id INTEGER NOT NULL,
+	PRIMARY KEY (tournament_id, team_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tournament_teams_team ON tournament_teams(team_id);
+CREATE TABLE IF NOT EXISTS tournament_subscriptions (
+	user_id INTEGER NOT NULL,
+	tournament_id INTEGER NOT NULL,
+	PRIMARY KEY (user_id, tournament_id),
+	FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_tournament_subscriptions_tournament ON tournament_subscriptions(tournament_id);
 `
 
 type Storage struct {
@@ -115,28 +128,31 @@ func InitSchema(db *sql.DB) error {
 	return migrateSchema(db)
 }
 
-// matchColumnMigrations — колонки matches, добавленные после первой версии
-// схемы. CREATE TABLE IF NOT EXISTS не меняет уже существующую таблицу,
+// columnMigrations — колонки, добавленные после первой версии схемы.
+// CREATE TABLE IF NOT EXISTS не меняет уже существующую таблицу,
 // поэтому в старых БД недостающие колонки добавляются через ALTER.
-var matchColumnMigrations = []struct{ name, def string }{
-	{"hltv_url", "TEXT NOT NULL DEFAULT ''"},
-	{"hltv_checked_at", "INTEGER NOT NULL DEFAULT 0"},
+var columnMigrations = []struct{ table, name, def string }{
+	{"matches", "hltv_url", "TEXT NOT NULL DEFAULT ''"},
+	{"matches", "hltv_checked_at", "INTEGER NOT NULL DEFAULT 0"},
+	{"matches", "is_playoff", "INTEGER NOT NULL DEFAULT 0"},
+	{"tournaments", "end_at", "INTEGER NOT NULL DEFAULT 0"},
+	{"user_settings", "tournament_view", "INTEGER NOT NULL DEFAULT 0"},
 }
 
-// migrateSchema идемпотентно добавляет недостающие колонки в matches.
+// migrateSchema идемпотентно добавляет недостающие колонки.
 func migrateSchema(db *sql.DB) error {
-	for _, c := range matchColumnMigrations {
+	for _, c := range columnMigrations {
 		var n int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('matches') WHERE name = ?`, c.name).Scan(&n); err != nil {
-			return fmt.Errorf("проверка колонки matches.%s: %w", c.name, err)
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, c.table, c.name).Scan(&n); err != nil {
+			return fmt.Errorf("проверка колонки %s.%s: %w", c.table, c.name, err)
 		}
 		if n > 0 {
 			continue
 		}
-		if _, err := db.Exec(`ALTER TABLE matches ADD COLUMN ` + c.name + ` ` + c.def); err != nil {
-			return fmt.Errorf("добавление колонки matches.%s: %w", c.name, err)
+		if _, err := db.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.name + ` ` + c.def); err != nil {
+			return fmt.Errorf("добавление колонки %s.%s: %w", c.table, c.name, err)
 		}
-		slog.Info("Миграция БД: добавлена колонка", slog.String("column", "matches."+c.name))
+		slog.Info("Миграция БД: добавлена колонка", slog.String("column", c.table+"."+c.name))
 	}
 	return nil
 }

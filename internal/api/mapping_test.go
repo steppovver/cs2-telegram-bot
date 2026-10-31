@@ -102,4 +102,70 @@ func TestMapPandaMatchFromFixture(t *testing.T) {
 	if !official {
 		t.Error("нет official-стрима (ESLCS)")
 	}
+	if m.IsPlayoff {
+		t.Error("Group Stage не должен считаться плей-офф")
+	}
+}
+
+func TestIsPlayoffStage(t *testing.T) {
+	tests := []struct {
+		name       string
+		hasBracket bool
+		want       bool
+	}{
+		{"Playoffs", true, true},
+		{"Playoffs", false, true},
+		{"Play-offs", false, true},
+		{"Grand Final", false, true},
+		{"Knockout Stage", false, true},
+		{"Group Stage", false, false},
+		{"Group A", true, false},
+		{"Swiss Stage", true, false},
+		{"Play-in", true, false},
+		{"Closed Qualifier", true, false},
+		{"Stage 2", true, true},
+		{"Stage 2", false, false},
+		{"", false, false},
+	}
+	for _, tt := range tests {
+		if got := isPlayoffStage(tt.name, tt.hasBracket); got != tt.want {
+			t.Errorf("isPlayoffStage(%q, %v) = %v, want %v", tt.name, tt.hasBracket, got, tt.want)
+		}
+	}
+}
+
+// TestMapPandaPlayoffFixture — финал PGL Masters: стадия Playoffs,
+// ключ турнира — серия, окончание серии из serie.end_at.
+func TestMapPandaPlayoffFixture(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "api-examples", "pgl-masters-playoff-match.json"))
+	if err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	var matches []pandaMatch
+	if err := json.Unmarshal(raw, &matches); err != nil {
+		t.Fatalf("decode fixture: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("fixture: матчей %d, want 1", len(matches))
+	}
+	m, ok := mapPandaMatch(matches[0])
+	if !ok {
+		t.Fatal("mapPandaMatch отклонил фикстуру")
+	}
+	if !m.IsPlayoff {
+		t.Error("финал должен считаться плей-офф")
+	}
+	if m.TournamentID != 11118 {
+		t.Errorf("TournamentID = %d, want 11118", m.TournamentID)
+	}
+	if m.Tournament != "PGL Masters Bucharest 2026" {
+		t.Errorf("Tournament = %q", m.Tournament)
+	}
+	wantEnd := time.Date(2026, 10, 31, 16, 0, 0, 0, time.UTC)
+	if !m.TournamentEndAt.Equal(wantEnd) {
+		t.Errorf("TournamentEndAt = %v, want %v", m.TournamentEndAt, wantEnd)
+	}
+	if m.NumberOfGames != 5 {
+		t.Errorf("NumberOfGames = %d, want 5", m.NumberOfGames)
+	}
 }
