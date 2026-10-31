@@ -13,23 +13,30 @@ import (
 	"cs2bot/internal/domain"
 )
 
-func (b *Bot) StartPoller(ctx context.Context, interval time.Duration) {
-	if interval <= 0 {
-		interval = time.Duration(config.DefaultPollIntervalSec) * time.Second
+// StartPoller опрашивает предстоящие/live матчи. Пауза между циклами
+// динамическая (apiPaceTargetPercent лимита в час) с гистерезисом запаса;
+// иначе и пока заголовок неизвестен — fallback (poll_interval_seconds).
+func (b *Bot) StartPoller(ctx context.Context, fallback time.Duration) {
+	if fallback <= 0 {
+		fallback = time.Duration(config.DefaultPollIntervalSec) * time.Second
 	}
-	slog.Info("Воркер опроса матчей запущен", slog.Duration("interval", interval))
-	b.runPollerCycle(ctx)
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	b.pollFallback = fallback
+	slog.Info("Воркер опроса матчей запущен", slog.Duration("fallback_interval", fallback))
 
 	for {
+		delay := b.runPollerCycle(ctx, fallback)
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 			slog.Info("Воркер опрашивания матчей завершил работу")
 			return
-		case <-ticker.C:
-			b.runPollerCycle(ctx)
+		case <-timer.C:
 		}
 	}
 }
@@ -73,23 +80,36 @@ func classifyMatchUpdate(c domain.MatchChange, status string) (matchEventKind, b
 	}
 }
 
-func (b *Bot) runPollerCycle(ctx context.Context) {
+func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.Duration {
 	slog.Debug("Запуск цикла обновления матчей")
 
 	idsToFetch, err := b.storage.GetSubscribedTeamIDs()
 	if err != nil {
 		slog.Error("Ошибка получения ID команд из БД", slog.Any("error", err))
-		return
+		return b.applyPollPace(nextPollDelay(-1, 0, 0, fallback, b.paceRestricted()))
 	}
 	if len(idsToFetch) == 0 {
-		return
+		_, remaining, limit := b.panda.APIUsage()
+		pace := nextPollDelay(remaining, limit, 0, fallback, b.paceRestricted())
+		b.maybeNotifyAPIHeadroom(ctx, remaining, limit, pace.Restricted)
+		return b.applyPollPace(pace)
 	}
 
-	// Обновляем предстоящие матчи
+	usedBefore, _, _ := b.panda.APIUsage()
 	matches, err := b.panda.FetchMatchesByTeamIDs(ctx, idsToFetch)
+	usedAfter, remaining, limit := b.panda.APIUsage()
+	cycleReqs := usedAfter - usedBefore
+	if cycleReqs < 0 {
+		// Счётчик used обнулился на границе UTC-часа внутри цикла.
+		cycleReqs = usedAfter
+	}
+	pace := nextPollDelay(remaining, limit, cycleReqs, fallback, b.paceRestricted())
+	b.maybeNotifyAPIHeadroom(ctx, remaining, limit, pace.Restricted)
+	delay := b.applyPollPace(pace)
+
 	if err != nil {
 		slog.Error("Ошибка запроса матчей из API", slog.Any("error", err))
-		return
+		return delay
 	}
 
 	// Собираем ID матчей из ответа API
@@ -153,7 +173,76 @@ func (b *Bot) runPollerCycle(ctx context.Context) {
 			slog.Int("api_matches", len(matches)),
 			slog.Int("events", len(events)),
 			slog.Int("started", started),
-			slog.Int("new", news))
+			slog.Int("new", news),
+			slog.Duration("next_delay", delay),
+			slog.Bool("pace_restricted", pace.Restricted))
+	} else {
+		slog.Debug("Цикл обновления матчей",
+			slog.Duration("next_delay", delay),
+			slog.Int("cycle_reqs", cycleReqs),
+			slog.Bool("pace_restricted", pace.Restricted))
+	}
+	return delay
+}
+
+// paceRestricted читает флаг гистерезиса запаса лимита.
+func (b *Bot) paceRestricted() bool {
+	b.apiWarnMu.Lock()
+	defer b.apiWarnMu.Unlock()
+	return b.apiPaceRestricted
+}
+
+// applyPollPace сохраняет паузу для /admin и возвращает её длительность.
+func (b *Bot) applyPollPace(pace pollPace) time.Duration {
+	b.pollPaceMu.Lock()
+	b.pollPaceKnown = true
+	b.pollPaceDelay = pace.Delay
+	b.pollPaceMode = pace.Mode
+	b.pollPaceRestricted = pace.Restricted
+	b.pollPaceMu.Unlock()
+	return pace.Delay
+}
+
+// maybeNotifyAPIHeadroom шлёт админам сообщение при выключении динамики
+// (переход в restricted: остаток ≤ headroom%). Пока ждём остаток > target% — молчим.
+func (b *Bot) maybeNotifyAPIHeadroom(ctx context.Context, remaining, limit int, nowRestricted bool) {
+	if limit <= 0 || remaining < 0 {
+		return
+	}
+
+	b.apiWarnMu.Lock()
+	notify := shouldNotifyHeadroom(b.apiPaceRestricted, nowRestricted, b.apiWarnAt, time.Now())
+	b.apiPaceRestricted = nowRestricted
+	if notify {
+		b.apiWarnAt = time.Now()
+	}
+	b.apiWarnMu.Unlock()
+	if !notify {
+		return
+	}
+
+	fallback := b.pollFallback
+	if fallback <= 0 {
+		fallback = time.Duration(config.DefaultPollIntervalSec) * time.Second
+	}
+	slog.Info("Опрос матчей на фиксированном интервале: остаток лимита ≤ headroom",
+		slog.Int("remaining", remaining),
+		slog.Int("limit", limit),
+		slog.Int("headroom_pct", apiPaceHeadroomPercent),
+		slog.Int("resume_pct", apiPaceTargetPercent),
+		slog.Duration("delay", fallback))
+	text := fmt.Sprintf("⚠️ Остаток лимита PandaScore ≤ %d%%: %d/%d.\nОпрос на фиксированном интервале %s до остатка > %d%%.",
+		apiPaceHeadroomPercent, remaining, limit, fallback.Round(time.Second), apiPaceTargetPercent)
+	for id := range b.admins {
+		ok, dropped := b.enqueueToUser(ctx, id, text)
+		if dropped > 0 {
+			slog.Error("Не удалось поставить уведомление о лимите API в очередь",
+				slog.Int64("admin_id", id),
+				slog.Int("dropped", dropped))
+		}
+		if !ok {
+			return
+		}
 	}
 }
 

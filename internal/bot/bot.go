@@ -45,8 +45,8 @@ type Storage interface {
 type PandaClient interface {
 	FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string) ([]domain.Match, error)
 	FetchFinishedMatchesByTeamIDs(ctx context.Context, teamIDs []string, since time.Time) ([]domain.Match, error)
-	// APIUsage: запросов за текущий UTC-час, минимальный остаток лимита
-	// (-1 если ответов еще не было) и сам лимит в час.
+	// APIUsage: запросов за текущий UTC-час (локальный счётчик), последний
+	// остаток лимита (-1 если ответов еще не было) и лимит в час из конфига.
 	APIUsage() (used, remaining, limit int)
 }
 
@@ -87,10 +87,18 @@ type Bot struct {
 
 	maxStreams int
 
-	// apiWarnAt — время последнего варнинга об израсходовании лимита API.
-	// Throttle: чаще раза в час не предупреждаем.
-	apiWarnMu sync.Mutex
-	apiWarnAt time.Time
+	// apiWarnMu защищает гистерезис запаса лимита и уведомление админам.
+	apiWarnMu         sync.Mutex
+	apiWarnAt         time.Time // последнее сообщение админам; throttle раз в час
+	apiPaceRestricted bool      // выключили динамику на ≤ headroom, ждём остаток > target
+	pollFallback      time.Duration
+
+	// pollPace* — последняя пауза живого поллера для строки в /admin.
+	pollPaceMu         sync.Mutex
+	pollPaceKnown      bool
+	pollPaceDelay      time.Duration
+	pollPaceMode       pollPaceMode
+	pollPaceRestricted bool
 
 	admins map[int64]bool
 

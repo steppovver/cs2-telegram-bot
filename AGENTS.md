@@ -34,7 +34,7 @@ Cursor и OpenCode правят один и тот же репозиторий �
 - `internal/api/` — клиент PandaScore: `client.go` (чанки, ретраи, пагинация, учет лимита запросов), `types.go`, `mapping.go`
 - `internal/bot/` — Telegram-слой:
   - `handlers.go`, `digest_handler.go`, `score_handler.go`, `admin.go` — хендлеры и админка (`/admin`, `/version`)
-  - `poller.go` — опрос предстоящих/live матчей; `finished_poller.go` — добор завершенных для кнопки `📊`
+  - `poller.go`, `pace.go` — опрос предстоящих/live матчей с динамическим темпом; `finished_poller.go` — добор завершенных для кнопки `📊`
   - `reminders.go` — напоминания за 5 минут; `digest_worker.go` — ежедневный дайджест
   - `broadcaster.go` — очередь рассылки (~25 msg/sec, чистка заблокировавших, пауза по FloodWait)
   - `streams.go`, `tournaments.go`, `format.go`, `matches_message.go`, `tz.go` — рендер расписания/счета, часовые пояса
@@ -42,7 +42,7 @@ Cursor и OpenCode правят один и тот же репозиторий �
   - `telegram_poller.go` — выбор polling/webhook и свой `WebhookPoller` (вместо `telebot.Webhook`, который паникует на остановке)
 - `internal/hltv/` — поиск и резолв точных ссылок на матчи HLTV (`resolver.go`, `search.go` с провайдерами `ddg`/`searxng`/`none`, `match.go`); запуск за 12 часов до старта
 - `internal/youtube/` — oEmbed-резолвер имен YouTube-каналов (`resolver.go`, `oembed.go`, `videoid.go`), окно `[-6h, +48h]`, кеш в `stream_channels`
-- `internal/config/` — `config.go`: загрузка и нормализация `config.json` (дефолты: `poll 60s`, `finished_poll 900s`, `api_rate_limit 1000`, `search_provider ddg`, `telegram_mode polling`, `webhook_listen 127.0.0.1:18090`, `digest_preset_hours [9,10,11,12]`, `max_streams 0=all, cap 10`)
+- `internal/config/` — `config.go`: загрузка и нормализация `config.json` (дефолты: `poll 60s` как fallback живого поллера, `finished_poll 120s`, `api_rate_limit 1000`, `search_provider ddg`, `telegram_mode polling`, `webhook_listen 127.0.0.1:18090`, `digest_preset_hours [9,10,11,12]`, `max_streams 0=all, cap 10`)
 - `internal/domain/` — `models.go`: `Match`, `MatchChange`, `MatchStream`, `TeamInfo`, `DigestSettings` и др.
 - `internal/storage/` — SQLite: `sqlite.go` (схема, миграции), `matches.go`, `subscriptions.go`, `settings.go`, `streams.go` (кеш `stream_channels`)
 - `deploy/` — упаковка `.deb` (`nfpm.yaml`, `build-deb.sh`, `debian/{preinst,postinst,prerm,postrm}`), systemd-юниты (`cs2bot.service`, `cs2bot-teams-puller.{service,timer}`, `cs2bot-backup.{service,timer}`), `cs2bot-backup` (онлайн-бэкап SQLite), `deploy.sh` (сборка + `apt install` на сервер), `Caddyfile.cs2bot.example` (webhook за Caddy)
@@ -57,7 +57,7 @@ Cursor и OpenCode правят один и тот же репозиторий �
 
 ## Воркеры (`cmd/bot/main.go`)
 
-Опрос матчей (`poll_interval_seconds`, 15–3600) → добор завершенных (`finished_poll_interval_seconds`, 60–86400) → HLTV-резолвер → YouTube-резолвер (каждые 5 мин) → напоминания (каждую минуту, окно 5 мин) → рассылка → дайджест (каждую минуту). Расписание, напоминания, дайджест и события поллера читают имена стримов только из кеша БД.
+Опрос матчей (динамический темп 50% лимита PandaScore в час; выключается при остатке ≤ 40%, включается при > 50%; иначе и без заголовка — `poll_interval_seconds`, 15–3600) → добор завершенных (`finished_poll_interval_seconds`, 60–86400) → HLTV-резолвер → YouTube-резолвер (каждые 5 мин) → напоминания (каждую минуту, окно 5 мин) → рассылка → дайджест (каждую минуту). Расписание, напоминания, дайджест и события поллера читают имена стримов только из кеша БД.
 
 ## Правила кодогенерации
 
