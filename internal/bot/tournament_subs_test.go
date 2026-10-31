@@ -151,8 +151,11 @@ func TestTournamentsMenu(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(text, "только матчи ваших команд") {
+	if !strings.Contains(text, "показывают только матчи ваших команд") {
 		t.Errorf("текст режима по умолчанию: %q", text)
+	}
+	if !strings.Contains(text, "Кнопка «🙈 Показывать матчи турниров сразу» включает показ матчей плей-офф") {
+		t.Errorf("описание кнопки: %q", text)
 	}
 	if len(markup.InlineKeyboard) != 2 {
 		t.Fatalf("строк клавиатуры = %d, want 2", len(markup.InlineKeyboard))
