@@ -146,9 +146,9 @@ func tournamentsMenuText(empty, showAll bool) string {
 	sb.WriteString("Подписка добавляет матчи плей-офф: они появятся в расписании, счете и дайджесте, ")
 	sb.WriteString("а о начале каждого матча придет уведомление. Других уведомлений по ним не будет.\n\n")
 	if showAll {
-		sb.WriteString("По умолчанию: показывать турнирные матчи.")
+		sb.WriteString("В расписании, счете и дайджесте матчи плей-офф ваших турниров показываются сразу. Под сообщением их можно скрыть.")
 	} else {
-		sb.WriteString("По умолчанию: только матчи ваших команд, турнирные — по кнопке.")
+		sb.WriteString("В расписании, счете и дайджесте по умолчанию только матчи ваших команд. Матчи плей-офф турниров открываются кнопкой «Показать турнирные матчи» под сообщением.")
 	}
 	if empty {
 		sb.WriteString("\n\nПока нет турниров с вашими командами. Подпишитесь на команды в «🔔 Подписки на команды».")
@@ -169,9 +169,11 @@ func buildTournamentsKeyboard(tournaments []domain.TournamentInfo, showAll bool)
 		}
 		rows = append(rows, menu.Row(menu.Data(name, "tsub", "t_"+strconv.Itoa(t.ID))))
 	}
-	defaultText := "🙈 По умолчанию: только мои команды"
+	// Подпись — действие по нажатию, а не текущее состояние: иначе кнопка
+	// читается как статус и дублирует абзац выше.
+	defaultText := "🙈 Показывать матчи турниров сразу"
 	if showAll {
-		defaultText = "👁 По умолчанию: все матчи турниров"
+		defaultText = "Показывать только мои команды"
 	}
 	rows = append(rows, menu.Row(menu.Data(defaultText, "tsub", "default")))
 	menu.Inline(rows...)

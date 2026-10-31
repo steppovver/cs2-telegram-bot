@@ -160,7 +160,7 @@ func TestTournamentsMenu(t *testing.T) {
 	if got := markup.InlineKeyboard[0][0].Text; got != "✅ PGL Masters Bucharest 2026" {
 		t.Errorf("кнопка турнира = %q", got)
 	}
-	if got := markup.InlineKeyboard[1][0].Text; got != "🙈 По умолчанию: только мои команды" {
+	if got := markup.InlineKeyboard[1][0].Text; got != "🙈 Показывать матчи турниров сразу" {
 		t.Errorf("кнопка режима = %q", got)
 	}
 }
