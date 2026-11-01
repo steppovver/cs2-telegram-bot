@@ -102,13 +102,12 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 		return nil
 	}
 	userID := c.Sender().ID
-	showAll := b.tournamentViewDefault(userID)
-	text, extra, err := b.buildScheduleView(userID, showAll)
+	text, extra, err := b.buildScheduleView(userID, false)
 	if err != nil {
 		slog.Error("Ошибка получения расписания", slog.Int64("user_id", userID), slog.Any("error", err))
 		return c.Send("Ошибка получения расписания.", telebot.NoPreview)
 	}
-	return b.sendChunked(c, text, viewToggleMarkup(viewSchedule, showAll, extra))
+	return b.sendChunked(c, text, viewToggleMarkup(viewSchedule, false, extra))
 }
 
 // buildScheduleView собирает текст расписания. extra — число плей-офф

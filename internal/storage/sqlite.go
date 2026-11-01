@@ -136,7 +136,7 @@ var columnMigrations = []struct{ table, name, def string }{
 	{"matches", "hltv_checked_at", "INTEGER NOT NULL DEFAULT 0"},
 	{"matches", "is_playoff", "INTEGER NOT NULL DEFAULT 0"},
 	{"tournaments", "end_at", "INTEGER NOT NULL DEFAULT 0"},
-	{"user_settings", "tournament_view", "INTEGER NOT NULL DEFAULT 0"},
+	{"user_settings", "tournament_notify", "INTEGER NOT NULL DEFAULT 1"},
 }
 
 // migrateSchema идемпотентно добавляет недостающие колонки.
