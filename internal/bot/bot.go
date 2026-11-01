@@ -46,8 +46,8 @@ type Storage interface {
 	HasTournamentSubscriptions(userID int64) (bool, error)
 	GetUsersByTournamentID(tournamentID int) ([]int64, error)
 	GetActiveSubscribedTournamentIDs() ([]string, error)
-	GetTournamentView(userID int64) (bool, error)
-	SetTournamentView(userID int64, showAll bool) error
+	GetTournamentNotify(userID int64) (bool, error)
+	SetTournamentNotify(userID int64, enabled bool) error
 	CleanFinishedTournaments()
 }
 

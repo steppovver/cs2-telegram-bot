@@ -21,13 +21,12 @@ func (b *Bot) handleScore(c telebot.Context) error {
 		return nil
 	}
 	userID := c.Sender().ID
-	showAll := b.tournamentViewDefault(userID)
-	text, extra, err := b.buildScoreView(userID, showAll)
+	text, extra, err := b.buildScoreView(userID, false)
 	if err != nil {
 		slog.Error("Ошибка получения матчей со счетом", slog.Int64("user_id", userID), slog.Any("error", err))
 		return c.Send("Ошибка получения счета.", telebot.NoPreview)
 	}
-	return b.sendChunked(c, text, viewToggleMarkup(viewScore, showAll, extra))
+	return b.sendChunked(c, text, viewToggleMarkup(viewScore, false, extra))
 }
 
 // buildScoreView собирает текст счета; extra — как в buildScheduleView.

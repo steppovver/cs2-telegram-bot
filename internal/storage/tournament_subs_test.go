@@ -95,6 +95,13 @@ func TestTournamentPlayoffMatches(t *testing.T) {
 	if err != nil || !slices.Equal(users, []int64{1}) {
 		t.Errorf("GetUsersByTournamentID = %v, %v", users, err)
 	}
+	if err := s.SetTournamentNotify(1, false); err != nil {
+		t.Fatal(err)
+	}
+	users, err = s.GetUsersByTournamentID(100)
+	if err != nil || len(users) != 0 {
+		t.Errorf("при выключенных уведомлениях: %v, %v", users, err)
+	}
 }
 
 func TestGetTournamentsForUser(t *testing.T) {
@@ -190,22 +197,22 @@ func TestCleanFinishedTournaments(t *testing.T) {
 	}
 }
 
-func TestTournamentViewAndCascade(t *testing.T) {
+func TestTournamentNotifyAndCascade(t *testing.T) {
 	s := openTestStorage(t)
-	if v, err := s.GetTournamentView(1); err != nil || v {
-		t.Fatalf("дефолт: %v, %v; want false", v, err)
+	if v, err := s.GetTournamentNotify(1); err != nil || !v {
+		t.Fatalf("дефолт: %v, %v; want true", v, err)
 	}
 	if err := s.SetUserOffset(1, 5); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetTournamentView(1, true); err != nil {
+	if err := s.SetTournamentNotify(1, false); err != nil {
 		t.Fatal(err)
 	}
-	if v, err := s.GetTournamentView(1); err != nil || !v {
-		t.Errorf("после включения: %v, %v", v, err)
+	if v, err := s.GetTournamentNotify(1); err != nil || v {
+		t.Errorf("после выключения: %v, %v", v, err)
 	}
 	if off, _ := s.GetUserOffset(1); off != 5 {
-		t.Errorf("режим затер пояс: %d", off)
+		t.Errorf("тумблер затер пояс: %d", off)
 	}
 
 	if err := s.SubscribeTournament(1, 100); err != nil {

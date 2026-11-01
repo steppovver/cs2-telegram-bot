@@ -102,8 +102,14 @@ func (s *Storage) HasTournamentSubscriptions(userID int64) (bool, error) {
 	return n > 0, nil
 }
 
+// GetUsersByTournamentID — подписчики турнира с включенными уведомлениями
+// о старте матчей. Нет строки настроек -> уведомления включены (дефолт).
 func (s *Storage) GetUsersByTournamentID(tournamentID int) ([]int64, error) {
-	rows, err := s.db.Query(`SELECT user_id FROM tournament_subscriptions WHERE tournament_id = ?`, tournamentID)
+	rows, err := s.db.Query(`
+		SELECT ts.user_id
+		FROM tournament_subscriptions ts
+		LEFT JOIN user_settings st ON st.user_id = ts.user_id
+		WHERE ts.tournament_id = ? AND COALESCE(st.tournament_notify, 1) != 0`, tournamentID)
 	if err != nil {
 		return nil, fmt.Errorf("подписчики турнира %d: %w", tournamentID, err)
 	}
@@ -144,25 +150,26 @@ func (s *Storage) GetActiveSubscribedTournamentIDs() ([]string, error) {
 	return ids, rows.Err()
 }
 
-// GetTournamentView: true — по умолчанию показывать турнирные матчи.
-func (s *Storage) GetTournamentView(userID int64) (bool, error) {
+// GetTournamentNotify: true — слать уведомление о старте турнирных матчей.
+// Нет строки настроек -> включено.
+func (s *Storage) GetTournamentNotify(userID int64) (bool, error) {
 	var v int
-	err := s.db.QueryRow(`SELECT tournament_view FROM user_settings WHERE user_id = ?`, userID).Scan(&v)
+	err := s.db.QueryRow(`SELECT tournament_notify FROM user_settings WHERE user_id = ?`, userID).Scan(&v)
 	if err == sql.ErrNoRows {
-		return false, nil
+		return true, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("чтение режима турнирных матчей: %w", err)
+		return true, fmt.Errorf("чтение уведомлений турниров: %w", err)
 	}
 	return v != 0, nil
 }
 
-func (s *Storage) SetTournamentView(userID int64, showAll bool) error {
+func (s *Storage) SetTournamentNotify(userID int64, enabled bool) error {
 	return s.withUser(userID, func(tx *sql.Tx) error {
-		_, err := tx.Exec(`INSERT INTO user_settings (user_id, utc_offset, tournament_view)
+		_, err := tx.Exec(`INSERT INTO user_settings (user_id, utc_offset, tournament_notify)
 			VALUES (?, ?, ?)
-			ON CONFLICT(user_id) DO UPDATE SET tournament_view = excluded.tournament_view`,
-			userID, DefaultUTCOffset, boolInt(showAll))
+			ON CONFLICT(user_id) DO UPDATE SET tournament_notify = excluded.tournament_notify`,
+			userID, DefaultUTCOffset, boolInt(enabled))
 		return err
 	})
 }

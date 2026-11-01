@@ -22,16 +22,6 @@ const (
 	viewScore    viewKind = "score"
 )
 
-// tournamentViewDefault читает режим по умолчанию; ошибка = скрывать.
-func (b *Bot) tournamentViewDefault(userID int64) bool {
-	showAll, err := b.storage.GetTournamentView(userID)
-	if err != nil {
-		slog.Error("Ошибка получения режима турнирных матчей", slog.Int64("user_id", userID), slog.Any("error", err))
-		return false
-	}
-	return showAll
-}
-
 func isFanMatch(m domain.Match, subs []domain.TeamInfo) bool {
 	return isTeamSubscribed(subs, m.TeamAID) || isTeamSubscribed(subs, m.TeamBID)
 }
@@ -132,27 +122,26 @@ func (b *Bot) buildTournamentsMenu(userID int64) (string, *telebot.ReplyMarkup, 
 	if err != nil {
 		return "", nil, err
 	}
-	showAll, err := b.storage.GetTournamentView(userID)
+	notify, err := b.storage.GetTournamentNotify(userID)
 	if err != nil {
 		return "", nil, err
 	}
-	return tournamentsMenuText(len(tournaments) == 0, showAll), buildTournamentsKeyboard(tournaments, showAll), nil
+	return tournamentsMenuText(len(tournaments) == 0, notify), buildTournamentsKeyboard(tournaments, notify), nil
 }
 
-func tournamentsMenuText(empty, showAll bool) string {
+func tournamentsMenuText(empty, notify bool) string {
 	var sb strings.Builder
 	sb.WriteString("🏆 <b>Подписки на турниры</b>\n\n")
 	sb.WriteString("Здесь турниры, в которых играли, играют или будут играть ваши команды. ")
-	sb.WriteString("Подписка добавляет матчи плей-офф: они появятся в расписании, счете и дайджесте, ")
-	sb.WriteString("а о начале каждого матча придет уведомление. Других уведомлений по ним не будет.\n\n")
-	if showAll {
-		sb.WriteString("Сейчас расписание, счет и дайджест показывают матчи ваших команд и матчи плей-офф ваших турниров.\n")
-		sb.WriteString("Кнопка «🙈 Скрыть турнирные матчи» под сообщением скрывает матчи турниров в этом сообщении.\n")
-		sb.WriteString("Кнопка «Показывать только мои команды» выключает показ матчей плей-офф в расписании, счете и дайджесте.")
+	sb.WriteString("Подписка добавляет матчи плей-офф в дайджест. ")
+	sb.WriteString("В расписании и счете эти матчи скрыты. ")
+	sb.WriteString("Кнопка «Показать турнирные матчи» под сообщением показывает их в этом сообщении.\n\n")
+	if notify {
+		sb.WriteString("Уведомление о начале матча плей-офф включено.\n")
+		sb.WriteString("Кнопка «🔕 Выключить уведомления о матчах» отключает это уведомление.")
 	} else {
-		sb.WriteString("Сейчас расписание, счет и дайджест показывают только матчи ваших команд.\n")
-		sb.WriteString("Кнопка «Показать турнирные матчи» под сообщением показывает матчи плей-офф ваших турниров в этом сообщении.\n")
-		sb.WriteString("Кнопка «🙈 Показывать матчи турниров сразу» включает показ матчей плей-офф в расписании, счете и дайджесте.")
+		sb.WriteString("Уведомление о начале матча плей-офф выключено.\n")
+		sb.WriteString("Кнопка «🔔 Включить уведомления о матчах» включает это уведомление.")
 	}
 	if empty {
 		sb.WriteString("\n\nПока нет турниров с вашими командами. Подпишитесь на команды в «🔔 Подписки на команды».")
@@ -160,7 +149,7 @@ func tournamentsMenuText(empty, showAll bool) string {
 	return sb.String()
 }
 
-func buildTournamentsKeyboard(tournaments []domain.TournamentInfo, showAll bool) *telebot.ReplyMarkup {
+func buildTournamentsKeyboard(tournaments []domain.TournamentInfo, notify bool) *telebot.ReplyMarkup {
 	menu := &telebot.ReplyMarkup{}
 	var rows []telebot.Row
 	for _, t := range tournaments {
@@ -173,13 +162,11 @@ func buildTournamentsKeyboard(tournaments []domain.TournamentInfo, showAll bool)
 		}
 		rows = append(rows, menu.Row(menu.Data(name, "tsub", "t_"+strconv.Itoa(t.ID))))
 	}
-	// Подпись — действие по нажатию, а не текущее состояние: иначе кнопка
-	// читается как статус и дублирует абзац выше.
-	defaultText := "🙈 Показывать матчи турниров сразу"
-	if showAll {
-		defaultText = "Показывать только мои команды"
+	notifyText := "🔔 Включить уведомления о матчах"
+	if notify {
+		notifyText = "🔕 Выключить уведомления о матчах"
 	}
-	rows = append(rows, menu.Row(menu.Data(defaultText, "tsub", "default")))
+	rows = append(rows, menu.Row(menu.Data(notifyText, "tsub", "notify")))
 	menu.Inline(rows...)
 	return menu
 }
@@ -193,20 +180,21 @@ func (b *Bot) handleTournamentCallback(c telebot.Context) error {
 
 	var toast string
 	switch {
-	case data == "default":
-		showAll, err := b.storage.GetTournamentView(userID)
+	case data == "notify":
+		notify, err := b.storage.GetTournamentNotify(userID)
 		if err != nil {
-			slog.Error("Ошибка получения режима турнирных матчей", slog.Int64("user_id", userID), slog.Any("error", err))
+			slog.Error("Ошибка получения уведомлений турниров", slog.Int64("user_id", userID), slog.Any("error", err))
 			return c.Respond(&telebot.CallbackResponse{Text: "Внутренняя ошибка. Попробуйте позже."})
 		}
-		if err := b.storage.SetTournamentView(userID, !showAll); err != nil {
-			slog.Error("Ошибка изменения режима турнирных матчей", slog.Int64("user_id", userID), slog.Any("error", err))
+		if err := b.storage.SetTournamentNotify(userID, !notify); err != nil {
+			slog.Error("Ошибка изменения уведомлений турниров", slog.Int64("user_id", userID), slog.Any("error", err))
 			return c.Respond(&telebot.CallbackResponse{Text: "Не удалось сохранить."})
 		}
-		toast = "Турнирные матчи скрыты по умолчанию."
-		if !showAll {
-			toast = "Турнирные матчи показываются по умолчанию."
+		toast = "Уведомления о начале турнирных матчей выключены."
+		if !notify {
+			toast = "Уведомления о начале турнирных матчей включены."
 		}
+		slog.Info("Уведомления турниров переключены", slog.Int64("user_id", userID), slog.Bool("enabled", !notify))
 
 	case strings.HasPrefix(data, "t_"):
 		id, err := strconv.Atoi(strings.TrimPrefix(data, "t_"))
