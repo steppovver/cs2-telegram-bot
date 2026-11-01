@@ -43,8 +43,7 @@ type Storage interface {
 }
 
 type PandaClient interface {
-	FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string) ([]domain.Match, error)
-	FetchFinishedMatchesByTeamIDs(ctx context.Context, teamIDs []string, since time.Time) ([]domain.Match, error)
+	FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string, since time.Time) ([]domain.Match, error)
 	// APIUsage: запросов за текущий UTC-час (локальный счётчик), последний
 	// остаток лимита (-1 если ответов еще не было) и лимит в час из конфига.
 	APIUsage() (used, remaining, limit int)
@@ -99,6 +98,12 @@ type Bot struct {
 	pollPaceDelay      time.Duration
 	pollPaceMode       pollPaceMode
 	pollPaceRestricted bool
+
+	// pollCursor* — нижняя граница следующего опроса (begin_at самого
+	// раннего незавершённого). Только в памяти: рестарт = полный проход 24h.
+	pollCursorMu    sync.Mutex
+	pollCursor      time.Time
+	pollCursorTeams string // отпечаток подписанных team id; смена — сброс курсора
 
 	admins map[int64]bool
 

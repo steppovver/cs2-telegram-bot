@@ -101,6 +101,10 @@ type matchesQuery struct {
 	Since *time.Time
 }
 
+// matchStatuses — все статусы, которые бот хранит и показывает.
+// canceled отсекается в mapPandaMatch.
+var matchStatuses = []string{"not_started", "running", "postponed", "finished"}
+
 // url собирает URL страницы из фильтра.
 func (q matchesQuery) url(page int) string {
 	return fmt.Sprintf("%s?filter[opponent_id]=%s&filter[status]=%s&sort=%s&per_page=%d&page=%d",
@@ -112,23 +116,16 @@ func (q matchesQuery) url(page int) string {
 		page)
 }
 
-func (c *Client) FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string) ([]domain.Match, error) {
+// FetchMatchesByTeamIDs забирает матчи всех статусов с begin_at >= since.
+// Сортировка от новых к старым: страница обрывается на первом матче
+// старше since (см. queryChunk), историю целиком не тянем.
+func (c *Client) FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string, since time.Time) ([]domain.Match, error) {
+	s := since
 	return c.queryMatches(ctx, matchesQuery{
 		OpponentIDs: teamIDs,
-		Statuses:    []string{"not_started", "running", "postponed"},
-		Sort:        "begin_at",
-	})
-}
-
-// FetchFinishedMatchesByTeamIDs забирает завершенные матчи команд за окно
-// [since, now] для кнопки счета. Историю целиком не тянем: стоп при выходе
-// страницы за окно.
-func (c *Client) FetchFinishedMatchesByTeamIDs(ctx context.Context, teamIDs []string, since time.Time) ([]domain.Match, error) {
-	return c.queryMatches(ctx, matchesQuery{
-		OpponentIDs: teamIDs,
-		Statuses:    []string{"finished"},
+		Statuses:    matchStatuses,
 		Sort:        "-begin_at",
-		Since:       &since,
+		Since:       &s,
 	})
 }
 
