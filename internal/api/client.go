@@ -108,10 +108,9 @@ const (
 	filterSerie    = "serie_id"
 )
 
-var (
-	upcomingStatuses = []string{"not_started", "running", "postponed"}
-	finishedStatuses = []string{"finished"}
-)
+// matchStatuses — все статусы, которые бот хранит и показывает.
+// canceled отсекается в mapPandaMatch.
+var matchStatuses = []string{"not_started", "running", "postponed", "finished"}
 
 // url собирает URL страницы из фильтра.
 func (q matchesQuery) url(page int) string {
@@ -125,47 +124,30 @@ func (q matchesQuery) url(page int) string {
 		page)
 }
 
-func (c *Client) FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string) ([]domain.Match, error) {
+// FetchMatchesByTeamIDs забирает матчи всех статусов с begin_at >= since.
+// Сортировка от новых к старым: страница обрывается на первом матче
+// старше since (см. queryChunk), историю целиком не тянем.
+func (c *Client) FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string, since time.Time) ([]domain.Match, error) {
+	s := since
 	return c.queryMatches(ctx, matchesQuery{
 		Filter:   filterOpponent,
 		IDs:      teamIDs,
-		Statuses: upcomingStatuses,
-		Sort:     "begin_at",
-	})
-}
-
-// FetchFinishedMatchesByTeamIDs забирает завершенные матчи команд за окно
-// [since, now] для кнопки счета. Историю целиком не тянем: стоп при выходе
-// страницы за окно.
-func (c *Client) FetchFinishedMatchesByTeamIDs(ctx context.Context, teamIDs []string, since time.Time) ([]domain.Match, error) {
-	return c.queryMatches(ctx, matchesQuery{
-		Filter:   filterOpponent,
-		IDs:      teamIDs,
-		Statuses: finishedStatuses,
+		Statuses: matchStatuses,
 		Sort:     "-begin_at",
-		Since:    &since,
+		Since:    &s,
 	})
 }
 
-// FetchMatchesBySerieIDs забирает предстоящие и идущие матчи серий
-// (все стадии; плей-офф отбирает вызывающий по Match.IsPlayoff).
-func (c *Client) FetchMatchesBySerieIDs(ctx context.Context, serieIDs []string) ([]domain.Match, error) {
+// FetchMatchesBySerieIDs забирает матчи серий всех статусов с begin_at >= since.
+// Плей-офф отбирает вызывающий по Match.IsPlayoff.
+func (c *Client) FetchMatchesBySerieIDs(ctx context.Context, serieIDs []string, since time.Time) ([]domain.Match, error) {
+	s := since
 	return c.queryMatches(ctx, matchesQuery{
 		Filter:   filterSerie,
 		IDs:      serieIDs,
-		Statuses: upcomingStatuses,
-		Sort:     "begin_at",
-	})
-}
-
-// FetchFinishedMatchesBySerieIDs — завершенные матчи серий за окно [since, now].
-func (c *Client) FetchFinishedMatchesBySerieIDs(ctx context.Context, serieIDs []string, since time.Time) ([]domain.Match, error) {
-	return c.queryMatches(ctx, matchesQuery{
-		Filter:   filterSerie,
-		IDs:      serieIDs,
-		Statuses: finishedStatuses,
+		Statuses: matchStatuses,
 		Sort:     "-begin_at",
-		Since:    &since,
+		Since:    &s,
 	})
 }
 

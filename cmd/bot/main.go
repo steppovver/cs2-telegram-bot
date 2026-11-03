@@ -106,18 +106,11 @@ func main() {
 	// Создаем WaitGroup для отслеживания горутин
 	var wg sync.WaitGroup
 
-	// Запускаем воркер обновления расписания
+	// Запускаем воркер обновления расписания (включая finished для кнопки 📊)
 	wg.Add(1)
 	go func() {
 		defer wg.Done() // Уменьшаем счетчик при выходе из воркера
 		botApp.StartPoller(ctx, time.Duration(cfg.PollIntervalSec)*time.Second)
-	}()
-
-	// Запускаем воркер добора завершенных матчей (счет для кнопки 📊)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		botApp.StartFinishedPoller(ctx, time.Duration(cfg.FinishedPollIntervalSec)*time.Second)
 	}()
 
 	// Запускаем воркер поиска точных ссылок на матчи HLTV
