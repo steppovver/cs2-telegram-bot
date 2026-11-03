@@ -145,13 +145,26 @@ func buildScoreBlock(m domain.Match, subs []domain.TeamInfo, utcOffset int, show
 	return sb.String()
 }
 
-// highlightTeam подсвечивает команды пользователя, как в расписании.
+// highlightTeam подсвечивает команды пользователя в расписании, счете и дайджесте.
+// Любимая — со звездой, интересная — жирным, чужая сторона — как есть.
 func highlightTeam(name string, id int, subs []domain.TeamInfo) string {
 	esc := html.EscapeString(name)
 	for _, sub := range subs {
 		if sub.ID == id {
+			if sub.Favorite {
+				return "⭐ <b>" + esc + "</b>"
+			}
 			return "<b>" + esc + "</b>"
 		}
+	}
+	return esc
+}
+
+// pushTeam — имя в пуше: обе стороны жирные, любимая помечена звездой.
+func pushTeam(name string, favorite bool) string {
+	esc := "<b>" + html.EscapeString(name) + "</b>"
+	if favorite {
+		return "⭐ " + esc
 	}
 	return esc
 }

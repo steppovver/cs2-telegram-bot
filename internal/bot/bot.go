@@ -19,12 +19,12 @@ type Storage interface {
 	GetScheduleMatches(userID int64, untilUnix int64, withTournaments bool) (live, upcoming []domain.Match, err error)
 	GetScoreMatches(userID int64, withTournaments bool) ([]domain.Match, error)
 	GetMatchesForReminder() ([]domain.Match, error)
-	GetUsersByTeamIDs(teamAID, teamBID int) ([]int64, error)
+	GetMatchFans(teamAID, teamBID int) ([]domain.MatchFan, error)
 	ProcessMatch(m domain.Match) (domain.MatchChange, error)
 	MarkMatchAsNotified(matchID int) error
 	CleanOldMatches()
 	CleanStaleRunningMatches(apiMatchIDs map[int]bool)
-	Subscribe(userID, teamID int64, teamName string) error
+	Subscribe(userID, teamID int64, teamName string, favorite bool) error
 	Unsubscribe(userID, teamID int64) error
 	RemoveUser(userID int64) error
 	GetStats() (domain.BotStats, error)

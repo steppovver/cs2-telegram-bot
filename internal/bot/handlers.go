@@ -94,7 +94,16 @@ func (b *Bot) handleSubscribe(c telebot.Context) error {
 	}
 
 	menu := b.buildTeamsKeyboard("sub_", displayTeams, subs)
-	return c.Send("Выбери команды для получения уведомлений:\n\nНе нашел нужную? Просто введи часть ее названия в чат — найду и предложу подписаться.", menu, telebot.NoPreview)
+	return c.Send(subscribeMenuText(), menu, telebot.NoPreview)
+}
+
+func subscribeMenuText() string {
+	mins := int(subLevelGrace / time.Minute)
+	return fmt.Sprintf("Выбери команды.\n\n"+
+		"👀 интересная — только уведомление, что матч начался.\n"+
+		"⭐ любимая — новый матч, перенос, соперник, старт и напоминание за 5 минут.\n\n"+
+		"Клик по названию подписывает как на интересную. Второй клик в течение %d минут делает любимой. Клик по давней подписке снимает её.\n\n"+
+		"Не нашел нужную? Просто введи часть ее названия в чат — найду и предложу подписаться.", mins)
 }
 
 func (b *Bot) handleSchedule(c telebot.Context) error {
@@ -204,9 +213,21 @@ func (b *Bot) handleToggleSub(c telebot.Context) error {
 		return c.Respond(&telebot.CallbackResponse{Text: "Внутренняя ошибка сервера. Попробуйте позже."})
 	}
 
-	isSubbed := isTeamSubscribed(subs, int(teamID))
-
-	teamName := teamDisplayName(subs, int(teamID))
+	var current *domain.TeamInfo
+	for i := range subs {
+		if subs[i].ID == int(teamID) {
+			current = &subs[i]
+			break
+		}
+	}
+	subscribed := current != nil
+	favorite := subscribed && current.Favorite
+	var subscribedAt time.Time
+	teamName := ""
+	if subscribed {
+		teamName = current.Name
+		subscribedAt = current.SubscribedAt
+	}
 	if teams, err := b.storage.GetTeamsByIDs([]int{int(teamID)}); err == nil && len(teams) > 0 && teams[0].Name != "" {
 		teamName = teams[0].Name
 	}
@@ -214,13 +235,18 @@ func (b *Bot) handleToggleSub(c telebot.Context) error {
 		teamName = fmt.Sprintf("команда %d", teamID)
 	}
 
+	action := nextSubClick(subscribed, favorite, subscribedAt, time.Now())
 	var toastMsg string
-	if isSubbed {
+	switch action {
+	case subClickInterest:
+		err = b.storage.Subscribe(userID, teamID, teamName, false)
+		toastMsg = fmt.Sprintf("%s — интересная: только старт", teamName)
+	case subClickFavorite:
+		err = b.storage.Subscribe(userID, teamID, teamName, true)
+		toastMsg = fmt.Sprintf("%s — любимая: все уведомления", teamName)
+	default:
 		err = b.storage.Unsubscribe(userID, teamID)
-		toastMsg = fmt.Sprintf("Отписка от %s", teamName)
-	} else {
-		err = b.storage.Subscribe(userID, teamID, teamName)
-		toastMsg = fmt.Sprintf("Подписка на %s оформлена!", teamName)
+		toastMsg = fmt.Sprintf("%s — подписка снята", teamName)
 	}
 
 	if err != nil {
@@ -228,36 +254,39 @@ func (b *Bot) handleToggleSub(c telebot.Context) error {
 		return c.Respond(&telebot.CallbackResponse{Text: "Не удалось сохранить изменения."})
 	}
 
-	if isSubbed {
-		slog.Info("Отписка от команды", slog.Int64("user_id", userID), slog.Int64("team_id", teamID), slog.String("team", teamName))
-	} else {
-		slog.Info("Подписка на команду", slog.Int64("user_id", userID), slog.Int64("team_id", teamID), slog.String("team", teamName))
-	}
+	slog.Info("Изменение подписки на команду",
+		slog.Int64("user_id", userID),
+		slog.Int64("team_id", teamID),
+		slog.String("team", teamName),
+		slog.Int("action", int(action)))
 
-	// Отправляем успешный toast-ответ
 	_ = c.Respond(&telebot.CallbackResponse{Text: toastMsg})
 
 	if c.Message() == nil {
 		return nil
 	}
 	markup := c.Message().ReplyMarkup
-	if markup != nil {
-		for i, row := range markup.InlineKeyboard {
-			for j, btn := range row {
-				btnTeamID, ok := parseTeamIDFromButton(btn.Data)
-				if !ok || btnTeamID != teamID {
-					continue
-				}
-				if isSubbed {
-					markup.InlineKeyboard[i][j].Text = strings.TrimPrefix(btn.Text, "✅ ")
-				} else {
-					markup.InlineKeyboard[i][j].Text = "✅ " + btn.Text
-				}
-			}
-		}
-		return c.Edit(c.Message().Text, markup, telebot.ModeHTML)
+	if markup == nil {
+		return nil
 	}
-	return nil
+	newSub, newFav := false, false
+	switch action {
+	case subClickInterest:
+		newSub = true
+	case subClickFavorite:
+		newSub, newFav = true, true
+	}
+	label := teamButtonLabel(teamName, newSub, newFav)
+	for i, row := range markup.InlineKeyboard {
+		for j, btn := range row {
+			btnTeamID, ok := parseTeamIDFromButton(btn.Data)
+			if !ok || btnTeamID != teamID {
+				continue
+			}
+			markup.InlineKeyboard[i][j].Text = label
+		}
+	}
+	return c.Edit(c.Message().Text, markup, telebot.ModeHTML)
 }
 
 func (b *Bot) buildTeamsKeyboard(actionPrefix string, teamsToDisplay []domain.TeamInfo, userSubs []domain.TeamInfo) *telebot.ReplyMarkup {
@@ -267,11 +296,15 @@ func (b *Bot) buildTeamsKeyboard(actionPrefix string, teamsToDisplay []domain.Te
 
 	for _, t := range teamsToDisplay {
 		payload := strconv.Itoa(t.ID)
-		btnText := t.Name
-		if isTeamSubscribed(userSubs, t.ID) {
-			btnText = "✅ " + t.Name
+		subscribed, favorite := false, false
+		for _, sub := range userSubs {
+			if sub.ID == t.ID {
+				subscribed = true
+				favorite = sub.Favorite
+				break
+			}
 		}
-		currentRow = append(currentRow, menu.Data(btnText, actionPrefix, payload))
+		currentRow = append(currentRow, menu.Data(teamButtonLabel(t.Name, subscribed, favorite), actionPrefix, payload))
 
 		if len(currentRow) == 2 {
 			rows = append(rows, menu.Row(currentRow...))
@@ -284,15 +317,6 @@ func (b *Bot) buildTeamsKeyboard(actionPrefix string, teamsToDisplay []domain.Te
 
 	menu.Inline(rows...)
 	return menu
-}
-
-func isTeamSubscribed(subs []domain.TeamInfo, teamID int) bool {
-	for _, s := range subs {
-		if s.ID == teamID {
-			return true
-		}
-	}
-	return false
 }
 
 // parseTeamIDFromCallback разбирает payload колбэка после маршрутизации telebot.
@@ -331,15 +355,6 @@ func parseTeamIDFromButton(btnData string) (int64, bool) {
 	s := strings.TrimPrefix(btnData, "\f")
 	s = strings.TrimPrefix(s, "sub_|")
 	return parseTeamIDFromCallback(s)
-}
-
-func teamDisplayName(subs []domain.TeamInfo, teamID int) string {
-	for _, s := range subs {
-		if s.ID == teamID {
-			return s.Name
-		}
-	}
-	return ""
 }
 
 // sendChunked отправляет длинный HTML-текст кусками по строкам.

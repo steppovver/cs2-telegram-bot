@@ -63,7 +63,33 @@ func TestFormatMatchesMessageHighlightsSubs(t *testing.T) {
 	if !strings.Contains(got, "<b>G2</b>") {
 		t.Fatalf("ожидали жирный G2, got %q", got)
 	}
+	if strings.Contains(got, "⭐") {
+		t.Fatalf("интересная команда без звезды: %q", got)
+	}
 	if strings.Contains(got, "<b>FaZe</b>") {
 		t.Fatalf("неподписанная команда не должна быть жирной: %q", got)
+	}
+}
+
+func TestFormatMatchesMessageStarsFavorite(t *testing.T) {
+	subs := []domain.TeamInfo{
+		{ID: 1, Name: "G2", Favorite: true},
+		{ID: 3, Name: "FaZe", Favorite: false},
+	}
+	upcoming := []domain.Match{{
+		ID: 11, TeamA: "G2", TeamB: "FaZe", TeamAID: 1, TeamBID: 3,
+		Time:       time.Date(2026, 10, 8, 15, 0, 0, 0, time.UTC),
+		Tournament: "EPL", TournamentID: 7,
+		TournamentBeginAt: time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC),
+	}}
+	got := formatMatchesMessage("", nil, upcoming, subs, 3, 3)
+	if !strings.Contains(got, "⭐ <b>G2</b>") {
+		t.Fatalf("ожидали звезду у любимой, got %q", got)
+	}
+	if !strings.Contains(got, "<b>FaZe</b>") {
+		t.Fatalf("интересная должна остаться жирной, got %q", got)
+	}
+	if strings.Contains(got, "⭐ <b>FaZe</b>") {
+		t.Fatalf("звезда только у любимой: %q", got)
 	}
 }

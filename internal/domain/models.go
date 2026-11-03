@@ -85,6 +85,26 @@ type MatchStream struct {
 type TeamInfo struct {
 	ID   int
 	Name string
+	// Favorite — любимая команда: все уведомления. False при наличии подписки —
+	// интересная, из пушей только старт матча.
+	Favorite bool
+	// SubscribedAt — когда уровень включили в последний раз.
+	// Zero — подписка давняя (старые строки после миграции).
+	SubscribedAt time.Time
+}
+
+// MatchFan — подписчик одной из команд матча.
+// FavoriteA и FavoriteB — эта сторона у него любимая.
+// Оба false значит подписка на команду интересная.
+type MatchFan struct {
+	UserID    int64
+	FavoriteA bool
+	FavoriteB bool
+}
+
+// HasFavorite сообщает, что хотя бы одна команда матча у пользователя любимая.
+func (f MatchFan) HasFavorite() bool {
+	return f.FavoriteA || f.FavoriteB
 }
 
 // TournamentInfo — турнир (serie) в меню подписок на турниры.

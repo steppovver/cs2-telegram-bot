@@ -32,7 +32,7 @@ func TestTournamentPlayoffMatches(t *testing.T) {
 	now := time.Now()
 	serieBegin := now.Add(-2 * 24 * time.Hour)
 	serieEnd := now.Add(3 * 24 * time.Hour)
-	if err := s.Subscribe(1, 1, "Fav"); err != nil {
+	if err := s.Subscribe(1, 1, "Fav", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -100,7 +100,7 @@ func TestTournamentPlayoffMatches(t *testing.T) {
 func TestGetTournamentsForUser(t *testing.T) {
 	s := openTestStorage(t)
 	now := time.Now()
-	if err := s.Subscribe(1, 1, "Fav"); err != nil {
+	if err := s.Subscribe(1, 1, "Fav", false); err != nil {
 		t.Fatal(err)
 	}
 	put := func(id, a, serie int, begin, end time.Time) {

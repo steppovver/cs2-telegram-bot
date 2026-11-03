@@ -2,7 +2,6 @@ package bot
 
 import (
 	"context"
-	"html"
 	"log/slog"
 	"time"
 )
@@ -34,11 +33,9 @@ func (b *Bot) runRemindersCycle(ctx context.Context) {
 			continue
 		}
 
-		escA := "<b>" + html.EscapeString(match.TeamA) + "</b>"
-		escB := "<b>" + html.EscapeString(match.TeamB) + "</b>"
-		build := func(off int) string {
+		build := func(off int, favA, favB bool) string {
 			return "🔥 <b>Матч начнется с минуты на минуту!</b>\n\n" +
-				formatMatchCard(match, escA, escB, off, b.maxStreams)
+				formatMatchCard(match, pushTeam(match.TeamA, favA), pushTeam(match.TeamB, favB), off, b.maxStreams)
 		}
 
 		if !b.broadcastToFans(ctx, match, build) {

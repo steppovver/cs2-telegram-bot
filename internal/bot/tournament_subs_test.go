@@ -35,7 +35,10 @@ func TestMergePlayoffMatches(t *testing.T) {
 
 func TestMatchEventRecipients(t *testing.T) {
 	b, st := newTournamentTestBot(t)
-	if err := st.Subscribe(1, 10, "Fan"); err != nil {
+	if err := st.Subscribe(1, 10, "Fan", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Subscribe(3, 10, "Fav", true); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.SubscribeTournament(1, 500); err != nil {
@@ -54,16 +57,26 @@ func TestMatchEventRecipients(t *testing.T) {
 		ev    matchEvent
 		users []int64
 	}{
-		{"старт плей-офф: фанат и подписчик турнира без дублей", matchEvent{match: playoff, kind: eventStarted}, []int64{1, 2}},
-		{"новый плей-офф матч: только фанат", matchEvent{match: playoff, kind: eventNew}, []int64{1}},
-		{"смена времени: только фанат", matchEvent{match: playoff, kind: eventTimeChanged}, []int64{1}},
-		{"старт группового: только фанат", matchEvent{match: group, kind: eventStarted}, []int64{1}},
+		{"старт плей-офф: интересная, любимая и турнир без дублей", matchEvent{match: playoff, kind: eventStarted}, []int64{1, 2, 3}},
+		{"новый плей-офф матч: только любимая", matchEvent{match: playoff, kind: eventNew}, []int64{3}},
+		{"смена времени: только любимая", matchEvent{match: playoff, kind: eventTimeChanged}, []int64{3}},
+		{"старт группового: интересная и любимая", matchEvent{match: group, kind: eventStarted}, []int64{1, 3}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			users, err := b.matchEventRecipients(tt.ev)
+			fans, err := b.matchEventRecipients(tt.ev)
 			if err != nil {
 				t.Fatal(err)
+			}
+			users := make([]int64, len(fans))
+			for i, f := range fans {
+				users[i] = f.UserID
+				if f.UserID == 3 && !f.FavoriteA {
+					t.Error("любимая команда не помечена")
+				}
+				if f.UserID == 1 && f.HasFavorite() {
+					t.Error("интересная команда помечена как любимая")
+				}
 			}
 			slices.Sort(users)
 			if !slices.Equal(users, tt.users) {
@@ -76,7 +89,7 @@ func TestMatchEventRecipients(t *testing.T) {
 func TestBuildScheduleViewTournaments(t *testing.T) {
 	b, st := newTournamentTestBot(t)
 	now := time.Now()
-	if err := st.Subscribe(1, 10, "Fan"); err != nil {
+	if err := st.Subscribe(1, 10, "Fan", false); err != nil {
 		t.Fatal(err)
 	}
 	for _, m := range []domain.Match{
@@ -117,7 +130,7 @@ func TestBuildScheduleViewTournaments(t *testing.T) {
 
 func TestTournamentsMenu(t *testing.T) {
 	b, st := newTournamentTestBot(t)
-	if err := st.Subscribe(1, 10, "Fan"); err != nil {
+	if err := st.Subscribe(1, 10, "Fan", false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.ProcessMatch(domain.Match{

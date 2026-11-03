@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -77,6 +78,42 @@ func TestEarliestUnfinishedBegin(t *testing.T) {
 	})
 	if ok {
 		t.Fatal("expected no unfinished matches")
+	}
+}
+
+func TestFansForMatchEvent(t *testing.T) {
+	fans := []domain.MatchFan{
+		{UserID: 1, FavoriteA: true},
+		{UserID: 2},
+		{UserID: 3, FavoriteB: true},
+	}
+	started := fansForMatchEvent(eventStarted, fans)
+	if len(started) != 3 {
+		t.Fatalf("start recipients = %d, want 3", len(started))
+	}
+	for _, kind := range []matchEventKind{eventNew, eventOpponent, eventTimeChanged} {
+		got := fansForMatchEvent(kind, fans)
+		if len(got) != 2 || !got[0].HasFavorite() || !got[1].HasFavorite() {
+			t.Fatalf("kind %d recipients = %+v, want only favorites", kind, got)
+		}
+	}
+}
+
+func TestBuildCombinedUpdateMessageStarsFavorite(t *testing.T) {
+	ev := matchEvent{
+		kind: eventNew,
+		match: domain.Match{
+			TeamA: "G2", TeamB: "NAVI", TeamAID: 1, TeamBID: 2,
+			Time: time.Date(2026, 11, 3, 15, 0, 0, 0, time.UTC),
+		},
+		favA: true,
+	}
+	got := buildCombinedUpdateMessage([]matchEvent{ev}, 3, 0)
+	if !strings.Contains(got, "⭐ <b>G2</b>") {
+		t.Fatalf("нет звезды у любимой: %q", got)
+	}
+	if !strings.Contains(got, "<b>NAVI</b>") || strings.Contains(got, "⭐ <b>NAVI</b>") {
+		t.Fatalf("чужая сторона жирная и без звезды: %q", got)
 	}
 }
 
