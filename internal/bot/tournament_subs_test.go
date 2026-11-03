@@ -102,44 +102,28 @@ func TestBuildScheduleViewTournaments(t *testing.T) {
 		}
 	}
 
-	text, extra, err := b.buildScheduleView(1, false)
-	if err != nil || extra != 0 || strings.Contains(text, "Nemiga") {
-		t.Errorf("без подписки на турнир: extra=%d err=%v text=%q", extra, err, text)
-	}
-	if viewToggleMarkup(viewSchedule, false, extra) != nil {
-		t.Error("без турнирных матчей кнопки быть не должно")
+	text, err := b.buildScheduleView(1)
+	if err != nil || strings.Contains(text, "Nemiga") || !strings.Contains(text, "Fan") {
+		t.Errorf("без подписки на турнир: err=%v text=%q", err, text)
 	}
 
 	if err := st.SubscribeTournament(1, 500); err != nil {
 		t.Fatal(err)
 	}
-	text, extra, err = b.buildScheduleView(1, false)
-	if err != nil || extra != 1 || strings.Contains(text, "Nemiga") || !strings.Contains(text, "Fan") {
-		t.Errorf("скрытый режим: extra=%d err=%v text=%q", extra, err, text)
-	}
-	markup := viewToggleMarkup(viewSchedule, false, extra)
-	if markup == nil || markup.InlineKeyboard[0][0].Text != "🏆 Показать турнирные матчи (1)" {
-		t.Errorf("кнопка показа: %+v", markup)
-	}
-
-	text, extra, err = b.buildScheduleView(1, true)
-	if err != nil || extra != 1 || !strings.Contains(text, "Nemiga") {
-		t.Errorf("полный режим: extra=%d err=%v text=%q", extra, err, text)
+	text, err = b.buildScheduleView(1)
+	if err != nil || !strings.Contains(text, "Nemiga") || !strings.Contains(text, "Fan") {
+		t.Errorf("с подпиской на турнир: err=%v text=%q", err, text)
 	}
 	if strings.Contains(text, "<b>Nemiga</b>") {
 		t.Error("чужие команды не должны подсвечиваться")
 	}
-	if markup := viewToggleMarkup(viewSchedule, true, extra); markup == nil || markup.InlineKeyboard[0][0].Text != "🙈 Скрыть турнирные матчи" {
-		t.Errorf("кнопка скрытия: %+v", markup)
-	}
 
-	// Только подписка на турнир, без команд — расписание все равно строится.
 	if err := st.SubscribeTournament(2, 500); err != nil {
 		t.Fatal(err)
 	}
-	text, extra, err = b.buildScheduleView(2, false)
-	if err != nil || extra != 1 || text != "Для ваших команд в ближайшее время игр не найдено." {
-		t.Errorf("только турнир: extra=%d err=%v text=%q", extra, err, text)
+	text, err = b.buildScheduleView(2)
+	if err != nil || !strings.Contains(text, "Nemiga") {
+		t.Errorf("только турнир: err=%v text=%q", err, text)
 	}
 }
 
@@ -166,7 +150,7 @@ func TestTournamentsMenu(t *testing.T) {
 	if !strings.Contains(text, "Уведомление о начале матча плей-офф включено.") {
 		t.Errorf("текст уведомлений: %q", text)
 	}
-	if !strings.Contains(text, "эти матчи скрыты") {
+	if !strings.Contains(text, "в расписание, счет и дайджест") {
 		t.Errorf("текст расписания: %q", text)
 	}
 	if len(markup.InlineKeyboard) != 2 {

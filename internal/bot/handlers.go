@@ -102,47 +102,41 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 		return nil
 	}
 	userID := c.Sender().ID
-	text, extra, err := b.buildScheduleView(userID, false)
+	text, err := b.buildScheduleView(userID)
 	if err != nil {
 		slog.Error("Ошибка получения расписания", slog.Int64("user_id", userID), slog.Any("error", err))
 		return c.Send("Ошибка получения расписания.", telebot.NoPreview)
 	}
-	return b.sendChunked(c, text, viewToggleMarkup(viewSchedule, false, extra))
+	return b.sendChunked(c, text)
 }
 
-// buildScheduleView собирает текст расписания. extra — число плей-офф
-// матчей подписанных турниров без команд пользователя (для кнопки
-// показать/скрыть); при showAll=false они в текст не попадают.
-func (b *Bot) buildScheduleView(userID int64, showAll bool) (string, int, error) {
+// buildScheduleView собирает текст расписания: матчи команд и плей-офф
+// подписанных турниров.
+func (b *Bot) buildScheduleView(userID int64) (string, error) {
 	subs, err := b.storage.GetUserSubscriptions(userID)
 	if err != nil {
-		return "", 0, fmt.Errorf("подписки на команды: %w", err)
+		return "", fmt.Errorf("подписки на команды: %w", err)
 	}
 	hasTournaments, err := b.storage.HasTournamentSubscriptions(userID)
 	if err != nil {
-		return "", 0, err
+		return "", err
 	}
 	if len(subs) == 0 && !hasTournaments {
-		return noSubscriptionsText, 0, nil
+		return noSubscriptionsText, nil
 	}
 
 	live, upcoming, err := b.storage.GetScheduleMatches(userID, 0, hasTournaments)
 	if err != nil {
-		return "", 0, fmt.Errorf("матчи расписания: %w", err)
-	}
-	extra := countExtraMatches(live, subs) + countExtraMatches(upcoming, subs)
-	if !showAll {
-		live = fanMatchesOnly(live, subs)
-		upcoming = fanMatchesOnly(upcoming, subs)
+		return "", fmt.Errorf("матчи расписания: %w", err)
 	}
 	if len(live) == 0 && len(upcoming) == 0 {
-		if showAll && hasTournaments {
-			return "Для ваших команд и турниров в ближайшее время игр не найдено.", extra, nil
+		if hasTournaments {
+			return "Для ваших команд и турниров в ближайшее время игр не найдено.", nil
 		}
-		return "Для ваших команд в ближайшее время игр не найдено.", extra, nil
+		return "Для ваших команд в ближайшее время игр не найдено.", nil
 	}
 	utcOffset, _ := b.storage.GetUserOffset(userID)
-	return formatMatchesMessage("", live, upcoming, subs, utcOffset, b.maxStreams), extra, nil
+	return formatMatchesMessage("", live, upcoming, subs, utcOffset, b.maxStreams), nil
 }
 
 func (b *Bot) handleTextSearch(c telebot.Context) error {

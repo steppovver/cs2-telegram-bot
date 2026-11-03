@@ -14,97 +14,6 @@ import (
 
 const noSubscriptionsText = "Вы еще не подписаны ни на одну команду.\nНажмите «🔔 Подписки на команды»."
 
-// viewKind — экран с кнопкой показать/скрыть турнирные матчи.
-type viewKind string
-
-const (
-	viewSchedule viewKind = "sched"
-	viewScore    viewKind = "score"
-)
-
-func isFanMatch(m domain.Match, subs []domain.TeamInfo) bool {
-	return isTeamSubscribed(subs, m.TeamAID) || isTeamSubscribed(subs, m.TeamBID)
-}
-
-func fanMatchesOnly(matches []domain.Match, subs []domain.TeamInfo) []domain.Match {
-	var out []domain.Match
-	for _, m := range matches {
-		if isFanMatch(m, subs) {
-			out = append(out, m)
-		}
-	}
-	return out
-}
-
-func countExtraMatches(matches []domain.Match, subs []domain.TeamInfo) int {
-	n := 0
-	for _, m := range matches {
-		if !isFanMatch(m, subs) {
-			n++
-		}
-	}
-	return n
-}
-
-// viewToggleMarkup — кнопка под расписанием/счетом. Нет турнирных
-// матчей — нет кнопки (nil).
-func viewToggleMarkup(kind viewKind, showAll bool, extra int) *telebot.ReplyMarkup {
-	if extra == 0 {
-		return nil
-	}
-	menu := &telebot.ReplyMarkup{}
-	text := fmt.Sprintf("🏆 Показать турнирные матчи (%d)", extra)
-	data := string(kind) + "_all"
-	if showAll {
-		text = "🙈 Скрыть турнирные матчи"
-		data = string(kind) + "_mine"
-	}
-	menu.Inline(menu.Row(menu.Data(text, "view", data)))
-	return menu
-}
-
-func (b *Bot) handleViewCallback(c telebot.Context) error {
-	if c.Callback() == nil || c.Sender() == nil {
-		return nil
-	}
-	userID := c.Sender().ID
-	data := strings.TrimSpace(c.Callback().Data)
-	kind, mode, ok := strings.Cut(data, "_")
-	if !ok || (mode != "all" && mode != "mine") {
-		return c.Respond(&telebot.CallbackResponse{Text: "Неизвестное действие."})
-	}
-	showAll := mode == "all"
-
-	var text string
-	var extra int
-	var err error
-	switch viewKind(kind) {
-	case viewSchedule:
-		text, extra, err = b.buildScheduleView(userID, showAll)
-	case viewScore:
-		text, extra, err = b.buildScoreView(userID, showAll)
-	default:
-		return c.Respond(&telebot.CallbackResponse{Text: "Неизвестное действие."})
-	}
-	if err != nil {
-		slog.Error("Ошибка переключения турнирных матчей", slog.Int64("user_id", userID), slog.String("view", data), slog.Any("error", err))
-		return c.Respond(&telebot.CallbackResponse{Text: "Не удалось загрузить матчи."})
-	}
-	_ = c.Respond()
-
-	markup := viewToggleMarkup(viewKind(kind), showAll, extra)
-	// Длинный текст в одно сообщение не влезет: шлем заново пачкой.
-	if c.Message() == nil || len(chunkLines(text, tgChunkLimit)) > 1 {
-		return b.sendChunked(c, text, markup)
-	}
-	err = c.Edit(text, markup, telebot.ModeHTML, telebot.NoPreview)
-	if err == nil || errors.Is(err, telebot.ErrSameMessageContent) || errors.Is(err, telebot.ErrMessageNotModified) {
-		return nil
-	}
-	slog.Warn("Не удалось отредактировать сообщение, шлем новое", slog.Int64("user_id", userID), slog.Any("error", err))
-	return b.sendChunked(c, text, markup)
-}
-
 func (b *Bot) handleTournamentsMenu(c telebot.Context) error {
 	if c.Sender() == nil {
 		return nil
@@ -133,9 +42,7 @@ func tournamentsMenuText(empty, notify bool) string {
 	var sb strings.Builder
 	sb.WriteString("🏆 <b>Подписки на турниры</b>\n\n")
 	sb.WriteString("Здесь турниры, в которых играли, играют или будут играть ваши команды. ")
-	sb.WriteString("Подписка добавляет матчи плей-офф в дайджест. ")
-	sb.WriteString("В расписании и счете эти матчи скрыты. ")
-	sb.WriteString("Кнопка «Показать турнирные матчи» под сообщением показывает их в этом сообщении.\n\n")
+	sb.WriteString("Подписка добавляет матчи плей-офф в расписание, счет и дайджест.\n\n")
 	if notify {
 		sb.WriteString("Уведомление о начале матча плей-офф включено.\n")
 		sb.WriteString("Кнопка «🔕 Выключить уведомления о матчах» отключает это уведомление.")

@@ -21,38 +21,35 @@ func (b *Bot) handleScore(c telebot.Context) error {
 		return nil
 	}
 	userID := c.Sender().ID
-	text, extra, err := b.buildScoreView(userID, false)
+	text, err := b.buildScoreView(userID)
 	if err != nil {
 		slog.Error("Ошибка получения матчей со счетом", slog.Int64("user_id", userID), slog.Any("error", err))
 		return c.Send("Ошибка получения счета.", telebot.NoPreview)
 	}
-	return b.sendChunked(c, text, viewToggleMarkup(viewScore, false, extra))
+	return b.sendChunked(c, text)
 }
 
-// buildScoreView собирает текст счета; extra — как в buildScheduleView.
-func (b *Bot) buildScoreView(userID int64, showAll bool) (string, int, error) {
+// buildScoreView собирает текст счета: матчи команд и плей-офф
+// подписанных турниров.
+func (b *Bot) buildScoreView(userID int64) (string, error) {
 	subs, err := b.storage.GetUserSubscriptions(userID)
 	if err != nil {
-		return "", 0, fmt.Errorf("подписки на команды: %w", err)
+		return "", fmt.Errorf("подписки на команды: %w", err)
 	}
 	hasTournaments, err := b.storage.HasTournamentSubscriptions(userID)
 	if err != nil {
-		return "", 0, err
+		return "", err
 	}
 	if len(subs) == 0 && !hasTournaments {
-		return noSubscriptionsText, 0, nil
+		return noSubscriptionsText, nil
 	}
 
 	matches, err := b.storage.GetScoreMatches(userID, hasTournaments)
 	if err != nil {
-		return "", 0, fmt.Errorf("матчи со счетом: %w", err)
-	}
-	extra := countExtraMatches(matches, subs)
-	if !showAll {
-		matches = fanMatchesOnly(matches, subs)
+		return "", fmt.Errorf("матчи со счетом: %w", err)
 	}
 	utcOffset, _ := b.storage.GetUserOffset(userID)
-	return formatScoreMessage(matches, subs, utcOffset, showAll && hasTournaments), extra, nil
+	return formatScoreMessage(matches, subs, utcOffset, hasTournaments), nil
 }
 
 // formatScoreMessage рендерит идущие и завершенные матчи. withTournaments

@@ -174,7 +174,6 @@ func (b *Bot) RegisterHandlers() {
 	b.telebot.Handle(telebot.OnText, b.handleTextSearch)
 	b.telebot.Handle("\fsub_", b.handleToggleSub)
 	b.telebot.Handle("\ftsub", b.handleTournamentCallback)
-	b.telebot.Handle("\fview", b.handleViewCallback)
 	b.telebot.Handle("\fdigest", b.handleDigestCallback)
 	b.telebot.Handle("\fadmin", b.handleAdminCallback)
 }
