@@ -52,7 +52,7 @@ func TestMatchTournamentColumn(t *testing.T) {
 	put(2, "running", now.Add(-time.Hour))        // live
 	put(3, "not_started", now.Add(2*time.Minute)) // напоминание
 
-	ms, err := s.GetScoreMatches(1)
+	ms, err := s.GetScoreMatches(1, false)
 	if got := mustTournament(t, ms, err, 1); got != "ESL Pro League Season 24 2026" {
 		t.Errorf("score Tournament = %q", got)
 	}
@@ -76,7 +76,7 @@ func TestMatchTournamentColumn(t *testing.T) {
 	if tname != "ESL Pro League Season 24 2026" || tbegin != time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC).Unix() {
 		t.Errorf("tournaments row = %q %d", tname, tbegin)
 	}
-	live, upcoming, err := s.GetScheduleMatches(1, 0)
+	live, upcoming, err := s.GetScheduleMatches(1, 0, false)
 	if got := mustTournament(t, live, err, 2); got != "ESL Pro League Season 24 2026" {
 		t.Errorf("live Tournament = %q", got)
 	}
@@ -318,11 +318,11 @@ func TestHLTVColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	const want = "https://www.hltv.org/matches/1/g2-vs-navi"
-	_, upcoming, err := s.GetScheduleMatches(1, 0)
+	_, upcoming, err := s.GetScheduleMatches(1, 0, false)
 	if err != nil || len(upcoming) == 0 || upcoming[0].ID != 1 || upcoming[0].HLTVURL != want {
 		t.Errorf("GetScheduleMatches: %+v, %v", upcoming, err)
 	}
-	_, windowed, err := s.GetScheduleMatches(1, now.Add(24*time.Hour).Unix())
+	_, windowed, err := s.GetScheduleMatches(1, now.Add(24*time.Hour).Unix(), false)
 	if err != nil || len(windowed) == 0 || windowed[0].HLTVURL != want {
 		t.Errorf("GetScheduleMatches with until: %+v, %v", windowed, err)
 	}
@@ -360,7 +360,7 @@ func TestGetScheduleMatchesUntil(t *testing.T) {
 	put(2, "not_started", now.Add(2*time.Hour))
 	put(3, "not_started", now.Add(48*time.Hour))
 
-	live, upcoming, err := s.GetScheduleMatches(1, 0)
+	live, upcoming, err := s.GetScheduleMatches(1, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +371,7 @@ func TestGetScheduleMatchesUntil(t *testing.T) {
 		t.Fatalf("upcoming без until: %+v", upcoming)
 	}
 
-	live, upcoming, err = s.GetScheduleMatches(1, now.Add(24*time.Hour).Unix())
+	live, upcoming, err = s.GetScheduleMatches(1, now.Add(24*time.Hour).Unix(), false)
 	if err != nil {
 		t.Fatal(err)
 	}

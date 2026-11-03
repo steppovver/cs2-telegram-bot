@@ -40,7 +40,7 @@ func TestStreamChannelsSharedAcrossMatches(t *testing.T) {
 		t.Fatalf("SaveStreamChannel: %v", err)
 	}
 
-	live, upcoming, err := s.GetScheduleMatches(1, 0)
+	live, upcoming, err := s.GetScheduleMatches(1, 0, false)
 	if err != nil {
 		t.Fatalf("GetScheduleMatches: %v", err)
 	}

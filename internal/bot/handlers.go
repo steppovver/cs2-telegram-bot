@@ -102,27 +102,41 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 		return nil
 	}
 	userID := c.Sender().ID
-	utcOffset, _ := b.storage.GetUserOffset(userID)
-	subs, err := b.storage.GetUserSubscriptions(userID)
-	if err != nil {
-		return c.Send("Произошла ошибка при обращении к базе данных.", telebot.NoPreview)
-	}
-
-	if len(subs) == 0 {
-		return c.Send("Вы еще не подписаны ни на одну команду.\nНажмите «🔔 Подписки на команды».", telebot.NoPreview)
-	}
-
-	live, upcoming, err := b.storage.GetScheduleMatches(userID, 0)
+	text, err := b.buildScheduleView(userID)
 	if err != nil {
 		slog.Error("Ошибка получения расписания", slog.Int64("user_id", userID), slog.Any("error", err))
 		return c.Send("Ошибка получения расписания.", telebot.NoPreview)
 	}
+	return b.sendChunked(c, text)
+}
 
-	if len(live) == 0 && len(upcoming) == 0 {
-		return c.Send("Для ваших команд в ближайшее время игр не найдено.", telebot.NoPreview)
+// buildScheduleView собирает текст расписания: матчи команд и плей-офф
+// подписанных турниров.
+func (b *Bot) buildScheduleView(userID int64) (string, error) {
+	subs, err := b.storage.GetUserSubscriptions(userID)
+	if err != nil {
+		return "", fmt.Errorf("подписки на команды: %w", err)
+	}
+	hasTournaments, err := b.storage.HasTournamentSubscriptions(userID)
+	if err != nil {
+		return "", err
+	}
+	if len(subs) == 0 && !hasTournaments {
+		return noSubscriptionsText, nil
 	}
 
-	return b.sendChunked(c, formatMatchesMessage("", live, upcoming, subs, utcOffset, b.maxStreams))
+	live, upcoming, err := b.storage.GetScheduleMatches(userID, 0, hasTournaments)
+	if err != nil {
+		return "", fmt.Errorf("матчи расписания: %w", err)
+	}
+	if len(live) == 0 && len(upcoming) == 0 {
+		if hasTournaments {
+			return "Для ваших команд и турниров в ближайшее время игр не найдено.", nil
+		}
+		return "Для ваших команд в ближайшее время игр не найдено.", nil
+	}
+	utcOffset, _ := b.storage.GetUserOffset(userID)
+	return formatMatchesMessage("", live, upcoming, subs, utcOffset, b.maxStreams), nil
 }
 
 func (b *Bot) handleTextSearch(c telebot.Context) error {

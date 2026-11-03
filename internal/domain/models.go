@@ -47,6 +47,10 @@ type Match struct {
 	TournamentID int
 	// TournamentBeginAt — старт турнира для сортировки групп. Zero = неизвестно.
 	TournamentBeginAt time.Time
+	// TournamentEndAt — окончание серии (serie.end_at). Zero = неизвестно.
+	TournamentEndAt time.Time
+	// IsPlayoff — матч стадии плей-офф: только их видят подписчики турнира.
+	IsPlayoff bool
 	// HLTVURL — точная ссылка на страницу матча на HLTV (matches.hltv_url),
 	// ее находит резолвер. Пусто = не найдена, рендер подставит поиск Google.
 	HLTVURL string
@@ -81,6 +85,15 @@ type MatchStream struct {
 type TeamInfo struct {
 	ID   int
 	Name string
+}
+
+// TournamentInfo — турнир (serie) в меню подписок на турниры.
+type TournamentInfo struct {
+	ID         int
+	Name       string
+	BeginAt    time.Time
+	EndAt      time.Time
+	Subscribed bool
 }
 
 type SearchedTeam struct {

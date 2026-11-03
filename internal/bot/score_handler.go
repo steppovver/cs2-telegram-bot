@@ -21,21 +21,40 @@ func (b *Bot) handleScore(c telebot.Context) error {
 		return nil
 	}
 	userID := c.Sender().ID
-	subs, err := b.storage.GetUserSubscriptions(userID)
-	if err != nil {
-		return c.Send("Произошла ошибка при обращении к базе данных.", telebot.NoPreview)
-	}
-
-	if len(subs) == 0 {
-		return c.Send("Вы еще не подписаны ни на одну команду.\nНажмите «🔔 Подписки на команды».", telebot.NoPreview)
-	}
-
-	matches, err := b.storage.GetScoreMatches(userID)
+	text, err := b.buildScoreView(userID)
 	if err != nil {
 		slog.Error("Ошибка получения матчей со счетом", slog.Int64("user_id", userID), slog.Any("error", err))
 		return c.Send("Ошибка получения счета.", telebot.NoPreview)
 	}
+	return b.sendChunked(c, text)
+}
+
+// buildScoreView собирает текст счета: матчи команд и плей-офф
+// подписанных турниров.
+func (b *Bot) buildScoreView(userID int64) (string, error) {
+	subs, err := b.storage.GetUserSubscriptions(userID)
+	if err != nil {
+		return "", fmt.Errorf("подписки на команды: %w", err)
+	}
+	hasTournaments, err := b.storage.HasTournamentSubscriptions(userID)
+	if err != nil {
+		return "", err
+	}
+	if len(subs) == 0 && !hasTournaments {
+		return noSubscriptionsText, nil
+	}
+
+	matches, err := b.storage.GetScoreMatches(userID, hasTournaments)
+	if err != nil {
+		return "", fmt.Errorf("матчи со счетом: %w", err)
+	}
 	utcOffset, _ := b.storage.GetUserOffset(userID)
+	return formatScoreMessage(matches, subs, utcOffset, hasTournaments), nil
+}
+
+// formatScoreMessage рендерит идущие и завершенные матчи. withTournaments
+// влияет только на текст пустого ответа.
+func formatScoreMessage(matches []domain.Match, subs []domain.TeamInfo, utcOffset int, withTournaments bool) string {
 	var running, finished []domain.Match
 	for _, m := range matches {
 		switch m.Status {
@@ -48,7 +67,10 @@ func (b *Bot) handleScore(c telebot.Context) error {
 	// Обе группы — по возрастанию времени начала, как отдает селект.
 
 	if len(running) == 0 && len(finished) == 0 {
-		return c.Send("Пока нет матчей со счетом для ваших команд.", telebot.NoPreview)
+		if withTournaments {
+			return "Пока нет матчей со счетом для ваших команд и турниров."
+		}
+		return "Пока нет матчей со счетом для ваших команд."
 	}
 
 	var sb strings.Builder
@@ -99,7 +121,7 @@ func (b *Bot) handleScore(c telebot.Context) error {
 	writeGroup("🔴 <b>Сейчас идут:</b>", running, false, &needDivider)
 	writeFinished(groupMatchesByTournament(finished), &needDivider)
 
-	return b.sendChunked(c, strings.TrimSuffix(sb.String(), "\n"))
+	return strings.TrimSuffix(sb.String(), "\n")
 }
 
 // buildScoreBlock форматирует один матч со счетом.

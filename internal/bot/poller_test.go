@@ -9,11 +9,11 @@ import (
 
 func TestClassifyMatchUpdate(t *testing.T) {
 	tests := []struct {
-		name                                                             string
+		name                                                            string
 		isNew, timeChanged, minorTimeShift, teamsChanged, statusChanged bool
-		status, oldStatus                                                string
-		wantKind                                                         matchEventKind
-		wantOK                                                           bool
+		status, oldStatus                                               string
+		wantKind                                                        matchEventKind
+		wantOK                                                          bool
 	}{
 		{name: "new", isNew: true, status: "not_started", wantKind: eventNew, wantOK: true},
 		{name: "new postponed", isNew: true, status: "postponed", wantOK: false},
@@ -93,14 +93,14 @@ func TestPollCursorTeamReset(t *testing.T) {
 	b := &Bot{}
 	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 	b.pollCursor = now.Add(-2 * time.Hour)
-	b.pollCursorTeams = teamIDsKey([]string{"1", "2"})
+	b.pollCursorTeams = pollScopeKey([]string{"1", "2"}, nil)
 
-	since := b.pollSinceForTeams([]string{"1", "2"}, now)
+	since := b.pollSinceForTeams([]string{"1", "2"}, nil, now)
 	if !since.Equal(b.pollCursor) {
 		t.Fatalf("same teams should keep cursor: since=%v cursor=%v", since, b.pollCursor)
 	}
 
-	since = b.pollSinceForTeams([]string{"1", "2", "3"}, now)
+	since = b.pollSinceForTeams([]string{"1", "2", "3"}, nil, now)
 	floor := now.Add(-pollHistoryWindow)
 	if !since.Equal(floor) {
 		t.Fatalf("team change should reset to floor: since=%v want %v", since, floor)

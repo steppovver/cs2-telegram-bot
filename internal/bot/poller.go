@@ -88,6 +88,23 @@ func classifyMatchUpdate(c domain.MatchChange, status string) (matchEventKind, b
 	}
 }
 
+// mergePlayoffMatches добавляет к матчам команд плей-офф матчи серий.
+// Групповые стадии чужих команд не сохраняем: их слишком много.
+func mergePlayoffMatches(teamMatches, serieMatches []domain.Match) []domain.Match {
+	seen := make(map[int]bool, len(teamMatches))
+	for _, m := range teamMatches {
+		seen[m.ID] = true
+	}
+	for _, m := range serieMatches {
+		if !m.IsPlayoff || seen[m.ID] {
+			continue
+		}
+		seen[m.ID] = true
+		teamMatches = append(teamMatches, m)
+	}
+	return teamMatches
+}
+
 // resolvePollSince — левая граница запроса: max(курсор, now-24h).
 // Нулевой курсор (старт / сброс) = полный пол.
 func resolvePollSince(cursor, now time.Time) time.Time {
@@ -121,7 +138,13 @@ func earliestUnfinishedBegin(matches []domain.Match) (time.Time, bool) {
 	return earliest, found
 }
 
-// teamIDsKey — стабильный отпечаток набора команд для сброса курсора.
+// pollScopeKey — отпечаток команд и подписанных серий. Смена любого
+// набора сбрасывает курсор, иначе новый турнир не доберет окно 24 часа.
+func pollScopeKey(teamIDs, serieIDs []string) string {
+	return teamIDsKey(teamIDs) + "|" + teamIDsKey(serieIDs)
+}
+
+// teamIDsKey — стабильный отпечаток набора ID для сброса курсора.
 func teamIDsKey(ids []string) string {
 	if len(ids) == 0 {
 		return ""
@@ -131,9 +154,9 @@ func teamIDsKey(ids []string) string {
 	return strings.Join(sorted, ",")
 }
 
-// pollSinceForTeams читает курсор; при смене набора команд сбрасывает его.
-func (b *Bot) pollSinceForTeams(ids []string, now time.Time) time.Time {
-	key := teamIDsKey(ids)
+// pollSinceForTeams читает курсор; при смене команд или серий сбрасывает его.
+func (b *Bot) pollSinceForTeams(teamIDs, serieIDs []string, now time.Time) time.Time {
+	key := pollScopeKey(teamIDs, serieIDs)
 	b.pollCursorMu.Lock()
 	defer b.pollCursorMu.Unlock()
 	if key != b.pollCursorTeams {
@@ -170,7 +193,14 @@ func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.D
 		slog.Error("Ошибка получения ID команд из БД", slog.Any("error", err))
 		return b.applyPollPace(nextPollDelay(-1, 0, 0, fallback, b.paceRestricted()))
 	}
-	if len(idsToFetch) == 0 {
+	// Без полного ответа по сериям нельзя чистить зависшие running:
+	// идущие турнирные матчи ушли бы в post_match.
+	serieIDs, err := b.storage.GetActiveSubscribedTournamentIDs()
+	seriesOK := err == nil
+	if err != nil {
+		slog.Error("Ошибка получения подписанных турниров из БД", slog.Any("error", err))
+	}
+	if len(idsToFetch) == 0 && len(serieIDs) == 0 {
 		b.resetPollCursor()
 		_, remaining, limit := b.panda.APIUsage()
 		pace := nextPollDelay(remaining, limit, 0, fallback, b.paceRestricted())
@@ -179,10 +209,19 @@ func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.D
 	}
 
 	now := time.Now()
-	since := b.pollSinceForTeams(idsToFetch, now)
+	since := b.pollSinceForTeams(idsToFetch, serieIDs, now)
 
 	usedBefore, _, _ := b.panda.APIUsage()
 	matches, err := b.panda.FetchMatchesByTeamIDs(ctx, idsToFetch, since)
+	if err == nil && len(serieIDs) > 0 {
+		serieMatches, serr := b.panda.FetchMatchesBySerieIDs(ctx, serieIDs, since)
+		if serr != nil {
+			slog.Error("Ошибка запроса матчей турниров из API", slog.Any("error", serr))
+			seriesOK = false
+		} else {
+			matches = mergePlayoffMatches(matches, serieMatches)
+		}
+	}
 	usedAfter, remaining, limit := b.panda.APIUsage()
 	cycleReqs := usedAfter - usedBefore
 	if cycleReqs < 0 {
@@ -246,9 +285,18 @@ func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.D
 		b.broadcastMatchEvents(ctx, events)
 	}
 
-	b.storage.CleanStaleRunningMatches(apiMatchIDs)
+	if seriesOK {
+		b.storage.CleanStaleRunningMatches(apiMatchIDs)
+	}
 	b.storage.CleanOldMatches()
-	b.rememberPollCursor(matches, now)
+	b.storage.CleanFinishedTournaments()
+	if seriesOK {
+		b.rememberPollCursor(matches, now)
+	} else {
+		// Ответ по сериям неполный: курсор не сужаем, иначе плей-офф
+		// ниже границы выпадет до следующего полного прохода.
+		b.resetPollCursor()
+	}
 
 	if len(events) > 0 || len(matches) > 0 {
 		var started, news int
@@ -378,7 +426,7 @@ func (b *Bot) broadcastMatchEvents(ctx context.Context, events []matchEvent) {
 
 	userEvents := make(map[int64][]matchEvent)
 	for _, ev := range events {
-		users, err := b.storage.GetUsersByTeamIDs(ev.match.TeamAID, ev.match.TeamBID)
+		users, err := b.matchEventRecipients(ev)
 		if err != nil {
 			slog.Error("Ошибка получения подписчиков матча",
 				slog.String("team_a", ev.match.TeamA),
@@ -424,6 +472,33 @@ func (b *Bot) broadcastMatchEvents(ctx context.Context, events []matchEvent) {
 			slog.Int("queue_len", len(b.broadcastCh)),
 		)
 	}
+}
+
+// matchEventRecipients — кому слать событие. Фанаты команд получают все
+// события, подписчики турнира — только старт плей-офф матча.
+func (b *Bot) matchEventRecipients(ev matchEvent) ([]int64, error) {
+	users, err := b.storage.GetUsersByTeamIDs(ev.match.TeamAID, ev.match.TeamBID)
+	if err != nil {
+		return nil, fmt.Errorf("подписчики команд: %w", err)
+	}
+	if ev.kind != eventStarted || !ev.match.IsPlayoff || ev.match.TournamentID == 0 {
+		return users, nil
+	}
+	tUsers, err := b.storage.GetUsersByTournamentID(ev.match.TournamentID)
+	if err != nil {
+		return nil, fmt.Errorf("подписчики турнира: %w", err)
+	}
+	seen := make(map[int64]bool, len(users))
+	for _, u := range users {
+		seen[u] = true
+	}
+	for _, u := range tUsers {
+		if !seen[u] {
+			seen[u] = true
+			users = append(users, u)
+		}
+	}
+	return users, nil
 }
 
 // buildCombinedUpdateMessage собирает все события цикла для одного юзера
