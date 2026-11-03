@@ -102,14 +102,10 @@ func (s *Storage) HasTournamentSubscriptions(userID int64) (bool, error) {
 	return n > 0, nil
 }
 
-// GetUsersByTournamentID — подписчики турнира с включенными уведомлениями
-// о старте матчей. Нет строки настроек -> уведомления включены (дефолт).
+// GetUsersByTournamentID — подписчики турнира. Им уходит уведомление о старте плей-офф.
 func (s *Storage) GetUsersByTournamentID(tournamentID int) ([]int64, error) {
 	rows, err := s.db.Query(`
-		SELECT ts.user_id
-		FROM tournament_subscriptions ts
-		LEFT JOIN user_settings st ON st.user_id = ts.user_id
-		WHERE ts.tournament_id = ? AND COALESCE(st.tournament_notify, 1) != 0`, tournamentID)
+		SELECT user_id FROM tournament_subscriptions WHERE tournament_id = ?`, tournamentID)
 	if err != nil {
 		return nil, fmt.Errorf("подписчики турнира %d: %w", tournamentID, err)
 	}
@@ -148,30 +144,6 @@ func (s *Storage) GetActiveSubscribedTournamentIDs() ([]string, error) {
 		ids = append(ids, strconv.Itoa(id))
 	}
 	return ids, rows.Err()
-}
-
-// GetTournamentNotify: true — слать уведомление о старте турнирных матчей.
-// Нет строки настроек -> включено.
-func (s *Storage) GetTournamentNotify(userID int64) (bool, error) {
-	var v int
-	err := s.db.QueryRow(`SELECT tournament_notify FROM user_settings WHERE user_id = ?`, userID).Scan(&v)
-	if err == sql.ErrNoRows {
-		return true, nil
-	}
-	if err != nil {
-		return true, fmt.Errorf("чтение уведомлений турниров: %w", err)
-	}
-	return v != 0, nil
-}
-
-func (s *Storage) SetTournamentNotify(userID int64, enabled bool) error {
-	return s.withUser(userID, func(tx *sql.Tx) error {
-		_, err := tx.Exec(`INSERT INTO user_settings (user_id, utc_offset, tournament_notify)
-			VALUES (?, ?, ?)
-			ON CONFLICT(user_id) DO UPDATE SET tournament_notify = excluded.tournament_notify`,
-			userID, DefaultUTCOffset, boolInt(enabled))
-		return err
-	})
 }
 
 // CleanFinishedTournaments удаляет связи с командами и подписки давно

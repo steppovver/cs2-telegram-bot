@@ -71,18 +71,6 @@ func TestMatchEventRecipients(t *testing.T) {
 			}
 		})
 	}
-
-	if err := st.SetTournamentNotify(2, false); err != nil {
-		t.Fatal(err)
-	}
-	users, err := b.matchEventRecipients(matchEvent{match: playoff, kind: eventStarted})
-	if err != nil {
-		t.Fatal(err)
-	}
-	slices.Sort(users)
-	if !slices.Equal(users, []int64{1}) {
-		t.Errorf("при выключенных уведомлениях получатели = %v, want [1]", users)
-	}
 }
 
 func TestBuildScheduleViewTournaments(t *testing.T) {
@@ -147,19 +135,30 @@ func TestTournamentsMenu(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(text, "Уведомление о начале матча плей-офф включено.") {
+	if !strings.Contains(text, "уведомление о начале такого матча") {
 		t.Errorf("текст уведомлений: %q", text)
+	}
+	if strings.Contains(text, "Выключить уведомления") || strings.Contains(text, "Включить уведомления") {
+		t.Errorf("текст тумблера остался: %q", text)
 	}
 	if !strings.Contains(text, "в расписание, счет и дайджест") {
 		t.Errorf("текст расписания: %q", text)
 	}
-	if len(markup.InlineKeyboard) != 2 {
-		t.Fatalf("строк клавиатуры = %d, want 2", len(markup.InlineKeyboard))
+	if len(markup.InlineKeyboard) != 1 {
+		t.Fatalf("строк клавиатуры = %d, want 1", len(markup.InlineKeyboard))
 	}
 	if got := markup.InlineKeyboard[0][0].Text; got != "✅ PGL Masters Bucharest 2026" {
 		t.Errorf("кнопка турнира = %q", got)
 	}
-	if got := markup.InlineKeyboard[1][0].Text; got != "🔕 Выключить уведомления о матчах" {
-		t.Errorf("кнопка режима = %q", got)
+
+	emptyText, emptyMarkup, err := b.buildTournamentsMenu(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if emptyMarkup != nil {
+		t.Fatalf("пустой список: клавиатура = %#v", emptyMarkup)
+	}
+	if !strings.Contains(emptyText, "Пока нет турниров") {
+		t.Errorf("пустой список: %q", emptyText)
 	}
 }
