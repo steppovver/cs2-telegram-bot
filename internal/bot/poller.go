@@ -13,15 +13,14 @@ import (
 	"cs2bot/internal/domain"
 )
 
-// pollHistoryWindow — глубина первого/сброшенного опроса. Совпадает с
-// горизонтом CleanOldMatches (24 часа): старше в БД всё равно ничего не лежит.
+// pollHistoryWindow — глубина опроса каждого цикла. Совпадает с горизонтом
+// CleanOldMatches (24 часа): старше в БД всё равно ничего не лежит.
 const pollHistoryWindow = 24 * time.Hour
 
 // StartPoller опрашивает предстоящие/live/завершённые матчи одним запросом.
 // Пауза между циклами динамическая (apiPaceTargetPercent лимита в час) с
 // гистерезисом запаса; иначе и пока заголовок неизвестен — fallback
-// (poll_interval_seconds). Курсор — begin_at самого раннего незавершённого:
-// следующий цикл не тянет finished старше этой границы (счёт там застывает).
+// (poll_interval_seconds). Каждый цикл тянет окно begin_at >= now-24h.
 func (b *Bot) StartPoller(ctx context.Context, fallback time.Duration) {
 	if fallback <= 0 {
 		fallback = time.Duration(config.DefaultPollIntervalSec) * time.Second
@@ -108,86 +107,6 @@ func mergePlayoffMatches(teamMatches, serieMatches []domain.Match) []domain.Matc
 	return teamMatches
 }
 
-// resolvePollSince — левая граница запроса: max(курсор, now-24h).
-// Нулевой курсор (старт / сброс) = полный пол.
-func resolvePollSince(cursor, now time.Time) time.Time {
-	floor := now.Add(-pollHistoryWindow)
-	if cursor.IsZero() || cursor.Before(floor) {
-		return floor
-	}
-	return cursor
-}
-
-// earliestUnfinishedBegin — самый ранний begin_at среди not_started/running/
-// postponed. Матчи без времени пропускаем: иначе zero time стянет курсор
-// в эпоху и сломает стоп. ok=false — незавершённых нет.
-func earliestUnfinishedBegin(matches []domain.Match) (time.Time, bool) {
-	var earliest time.Time
-	found := false
-	for _, m := range matches {
-		switch m.Status {
-		case "not_started", "running", "postponed":
-		default:
-			continue
-		}
-		if m.Time.IsZero() {
-			continue
-		}
-		if !found || m.Time.Before(earliest) {
-			earliest = m.Time
-			found = true
-		}
-	}
-	return earliest, found
-}
-
-// pollScopeKey — отпечаток команд и подписанных серий. Смена любого
-// набора сбрасывает курсор, иначе новый турнир не доберет окно 24 часа.
-func pollScopeKey(teamIDs, serieIDs []string) string {
-	return teamIDsKey(teamIDs) + "|" + teamIDsKey(serieIDs)
-}
-
-// teamIDsKey — стабильный отпечаток набора ID для сброса курсора.
-func teamIDsKey(ids []string) string {
-	if len(ids) == 0 {
-		return ""
-	}
-	sorted := append([]string(nil), ids...)
-	sort.Strings(sorted)
-	return strings.Join(sorted, ",")
-}
-
-// pollSinceForTeams читает курсор; при смене команд или серий сбрасывает его.
-func (b *Bot) pollSinceForTeams(teamIDs, serieIDs []string, now time.Time) time.Time {
-	key := pollScopeKey(teamIDs, serieIDs)
-	b.pollCursorMu.Lock()
-	defer b.pollCursorMu.Unlock()
-	if key != b.pollCursorTeams {
-		b.pollCursor = time.Time{}
-		b.pollCursorTeams = key
-	}
-	return resolvePollSince(b.pollCursor, now)
-}
-
-// rememberPollCursor сохраняет границу следующего цикла. Нет незавершённых —
-// курсор = now (прошлые finished больше не читаем).
-func (b *Bot) rememberPollCursor(matches []domain.Match, now time.Time) {
-	next, ok := earliestUnfinishedBegin(matches)
-	if !ok {
-		next = now
-	}
-	b.pollCursorMu.Lock()
-	b.pollCursor = next
-	b.pollCursorMu.Unlock()
-}
-
-// resetPollCursor сбрасывает курсор: следующий цикл снова на 24 часа.
-func (b *Bot) resetPollCursor() {
-	b.pollCursorMu.Lock()
-	b.pollCursor = time.Time{}
-	b.pollCursorMu.Unlock()
-}
-
 func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.Duration {
 	slog.Debug("Запуск цикла обновления матчей")
 
@@ -204,15 +123,13 @@ func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.D
 		slog.Error("Ошибка получения подписанных турниров из БД", slog.Any("error", err))
 	}
 	if len(idsToFetch) == 0 && len(serieIDs) == 0 {
-		b.resetPollCursor()
 		_, remaining, limit := b.panda.APIUsage()
 		pace := nextPollDelay(remaining, limit, 0, fallback, b.paceRestricted())
 		b.maybeNotifyAPIHeadroom(ctx, remaining, limit, pace.Restricted)
 		return b.applyPollPace(pace)
 	}
 
-	now := time.Now()
-	since := b.pollSinceForTeams(idsToFetch, serieIDs, now)
+	since := time.Now().Add(-pollHistoryWindow)
 
 	usedBefore, _, _ := b.panda.APIUsage()
 	matches, err := b.panda.FetchMatchesByTeamIDs(ctx, idsToFetch, since)
@@ -238,9 +155,6 @@ func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.D
 
 	if err != nil {
 		slog.Error("Ошибка запроса матчей из API", slog.Any("error", err))
-		// Неполный ответ — курсор не сужаем: иначе живой матч ниже границы
-		// выпадет до следующего полного прохода.
-		b.resetPollCursor()
 		return delay
 	}
 
@@ -253,11 +167,16 @@ func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.D
 	// Собираем события цикла, рассылка — одним сообщением на пользователя
 	// после цикла (иначе при пачке новых матчей каждому прилетает спам).
 	var events []matchEvent
+	var processed, finished int
 	for _, match := range matches {
 		change, err := b.storage.ProcessMatch(match)
 		if err != nil {
 			slog.Error("Ошибка сохранения матча", slog.Int("match_id", match.ID), slog.Any("error", err))
 			continue
+		}
+		processed++
+		if match.Status == "finished" {
+			finished++
 		}
 
 		if !change.Any() || match.TeamA == "TBD" || match.TeamB == "TBD" {
@@ -293,13 +212,6 @@ func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.D
 	}
 	b.storage.CleanOldMatches()
 	b.storage.CleanFinishedTournaments()
-	if seriesOK {
-		b.rememberPollCursor(matches, now)
-	} else {
-		// Ответ по сериям неполный: курсор не сужаем, иначе плей-офф
-		// ниже границы выпадет до следующего полного прохода.
-		b.resetPollCursor()
-	}
 
 	if len(events) > 0 || len(matches) > 0 {
 		var started, news int
@@ -313,6 +225,8 @@ func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.D
 		}
 		slog.Info("Цикл обновления матчей",
 			slog.Int("api_matches", len(matches)),
+			slog.Int("processed", processed),
+			slog.Int("finished", finished),
 			slog.Int("events", len(events)),
 			slog.Int("started", started),
 			slog.Int("new", news),

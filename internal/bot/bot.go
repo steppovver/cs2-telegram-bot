@@ -108,12 +108,6 @@ type Bot struct {
 	pollPaceMode       pollPaceMode
 	pollPaceRestricted bool
 
-	// pollCursor* — нижняя граница следующего опроса (begin_at самого
-	// раннего незавершённого). Только в памяти: рестарт = полный проход 24h.
-	pollCursorMu    sync.Mutex
-	pollCursor      time.Time
-	pollCursorTeams string // отпечаток подписанных team id; смена — сброс курсора
-
 	admins map[int64]bool
 
 	// hltvResolver — воркер точных ссылок HLTV; nil = выключен.

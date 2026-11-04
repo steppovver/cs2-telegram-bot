@@ -107,8 +107,14 @@ func TestFormatMatchCard(t *testing.T) {
 		},
 	}
 	got := formatMatchCard(m, "<b>Nemiga</b>", "<b>FURIA</b>", true, nil)
+	if !strings.HasPrefix(got, "<b>Nemiga</b> vs <b>FURIA</b> (BO5)\n<blockquote>") {
+		t.Fatalf("title outside blockquote: %q", got)
+	}
+	if !strings.HasSuffix(got, "</blockquote>") {
+		t.Fatalf("details must close blockquote: %q", got)
+	}
+	inner := got[strings.Index(got, "<blockquote>")+len("<blockquote>") : strings.LastIndex(got, "</blockquote>")]
 	for _, want := range []string{
-		"<b>Nemiga</b> vs <b>FURIA</b> (BO5)",
 		"Турнир:",
 		"PGL Masters Bucharest 2026",
 		"Официальная трансляция:",
@@ -118,8 +124,8 @@ func TestFormatMatchCard(t *testing.T) {
 		"HLTV: ",
 		"Профиль матча",
 	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("missing %q in %q", want, got)
+		if !strings.Contains(inner, want) {
+			t.Errorf("missing %q in blockquote %q", want, inner)
 		}
 	}
 	for _, ban := range []string{"⏰", "📺", "🎮", "⭐", "🔍", "📊", "🏟", "bysl4m", "Время:"} {
@@ -138,8 +144,8 @@ func TestFormatMatchCardNoOfficialNoTournament(t *testing.T) {
 	if strings.Contains(got, "Официальная трансляция:") {
 		t.Errorf("no official line without streams: %q", got)
 	}
-	if !strings.Contains(got, "Найти трансляцию:") {
-		t.Errorf("fallback required: %q", got)
+	if !strings.Contains(got, "<blockquote>Найти трансляцию:") {
+		t.Errorf("fallback inside blockquote: %q", got)
 	}
 }
 
@@ -165,7 +171,11 @@ func TestFormatMatchCardSkipTournament(t *testing.T) {
 func TestFormatMatchCardMiddleLines(t *testing.T) {
 	m := domain.Match{TeamA: "A", TeamB: "B"}
 	got := formatMatchCard(m, "A", "B", true, []string{"Серия: A 1 — 0 B", "Идет: 12 мин"})
-	if !strings.Contains(got, "Серия: A 1 — 0 B\nИдет: 12 мин\nНайти трансляцию:") {
-		t.Errorf("middle lines between teams and streams: %q", got)
+	if !strings.HasPrefix(got, "A vs B\n<blockquote>") {
+		t.Fatalf("title outside blockquote: %q", got)
+	}
+	inner := got[strings.Index(got, "<blockquote>")+len("<blockquote>") : strings.LastIndex(got, "</blockquote>")]
+	if !strings.Contains(inner, "Серия: A 1 — 0 B\nИдет: 12 мин\nНайти трансляцию:") {
+		t.Errorf("middle lines inside blockquote before streams: %q", inner)
 	}
 }
