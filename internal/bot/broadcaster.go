@@ -129,17 +129,25 @@ func (b *Bot) enqueueToUser(ctx context.Context, userID int64, texts ...string) 
 	return true, dropped
 }
 
+type fanSend int
+
+const (
+	fanSendNone fanSend = iota // любимых нет, флаг notified не ставим
+	fanSendOK
+	fanSendRetry
+)
+
 // broadcastToFans ставит напоминание тем, у кого в матче есть любимая команда.
 // Интересная подписка напоминание не получает.
-// Группа — пояс и набор любимых сторон: звезда в тексте зависит от пользователя.
-func (b *Bot) broadcastToFans(ctx context.Context, match domain.Match, build func(offset int, favA, favB bool) string) bool {
+// skip пропускает уже поставленных в очередь. note запоминает успешную постановку.
+func (b *Bot) broadcastToFans(ctx context.Context, match domain.Match, build func(offset int, favA, favB bool) string, skip func(int64) bool, note func(int64)) fanSend {
 	fans, err := b.storage.GetMatchFans(match.TeamAID, match.TeamBID)
 	if err != nil {
 		slog.Error("Ошибка получения подписчиков матча",
 			slog.String("team_a", match.TeamA),
 			slog.String("team_b", match.TeamB),
 			slog.Any("error", err))
-		return false
+		return fanSendRetry
 	}
 
 	favs := make([]domain.MatchFan, 0, len(fans))
@@ -149,7 +157,7 @@ func (b *Bot) broadcastToFans(ctx context.Context, match domain.Match, build fun
 		}
 	}
 	if len(favs) == 0 {
-		return true
+		return fanSendNone
 	}
 
 	ids := make([]int64, len(favs))
@@ -159,7 +167,9 @@ func (b *Bot) broadcastToFans(ctx context.Context, match domain.Match, build fun
 	offsets, err := b.storage.GetUserOffsets(ids)
 	if err != nil {
 		slog.Error("Ошибка получения часовых поясов", slog.Any("error", err))
-		offsets = make(map[int64]int, len(ids))
+		if offsets == nil {
+			offsets = make(map[int64]int, len(ids))
+		}
 	}
 
 	type fanKey struct {
@@ -178,28 +188,33 @@ func (b *Bot) broadcastToFans(ctx context.Context, match domain.Match, build fun
 		slog.Int("recipients", len(favs)),
 		slog.Int("offset_groups", len(groups)))
 
-	dropped := 0
+	pending := 0
 	for k, group := range groups {
 		msg := build(k.off, k.favA, k.favB)
 		for _, userID := range group {
+			if skip != nil && skip(userID) {
+				continue
+			}
+			pending++
 			ok, d := b.enqueueToUser(ctx, userID, msg)
-			dropped += d
-			if !ok {
-				return false
+			if !ok || d > 0 {
+				slog.Warn("Очередь рассылки переполнена, часть уведомлений отброшена",
+					slog.String("match", fmt.Sprintf("%s vs %s", match.TeamA, match.TeamB)),
+					slog.Int("dropped", d),
+					slog.Int("recipients", len(favs)),
+					slog.Int("queue_len", len(b.broadcastCh)),
+				)
+				return fanSendRetry
+			}
+			if note != nil {
+				note(userID)
 			}
 		}
 	}
-
-	if dropped > 0 {
-		slog.Warn("Очередь рассылки переполнена, часть уведомлений отброшена",
-			slog.String("match", fmt.Sprintf("%s vs %s", match.TeamA, match.TeamB)),
-			slog.Int("dropped", dropped),
-			slog.Int("recipients", len(favs)),
-			slog.Int("queue_len", len(b.broadcastCh)),
-		)
-		return false
+	if pending == 0 {
+		return fanSendOK
 	}
-	return true
+	return fanSendOK
 }
 
 // isUserGoneError определяет, что получатель мертв и слать ему больше

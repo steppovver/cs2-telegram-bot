@@ -67,6 +67,7 @@ func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int
 	hasTournaments, err := b.storage.HasTournamentSubscriptions(userID)
 	if err != nil {
 		slog.Error("Ошибка проверки подписок на турниры", slog.Int64("user_id", userID), slog.Any("error", err))
+		return false
 	}
 	live, upcoming, err := b.storage.GetScheduleMatches(userID, until.Unix(), hasTournaments)
 	if err != nil {

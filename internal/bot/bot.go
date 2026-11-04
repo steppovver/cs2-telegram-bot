@@ -21,7 +21,7 @@ type Storage interface {
 	GetMatchesForReminder() ([]domain.Match, error)
 	GetMatchFans(teamAID, teamBID int) ([]domain.MatchFan, error)
 	ProcessMatch(m domain.Match) (domain.MatchChange, error)
-	MarkMatchAsNotified(matchID int) error
+	MarkMatchAsNotified(matchID int, beginAt time.Time) (bool, error)
 	CleanOldMatches()
 	CleanStaleRunningMatches(apiMatchIDs map[int]bool)
 	Subscribe(userID, teamID int64, teamName string, favorite bool) error
@@ -114,6 +114,17 @@ type Bot struct {
 	pollCursor      time.Time
 	pollCursorTeams string // отпечаток подписанных team id; смена — сброс курсора
 
+	// reminderSent — кому напоминание уже положили в очередь, пока матч
+	// ещё не отмечен notified. Ключ включает begin_at, чтобы сдвиг времени
+	// не считался тем же напоминанием.
+	reminderMu   sync.Mutex
+	reminderSent map[reminderKey]map[int64]struct{}
+
+	// heldPushes — пуши матчей, которые не влезли в очередь. Досылаются
+	// на следующем цикле. Только в памяти процесса.
+	heldMu     sync.Mutex
+	heldPushes []heldPush
+
 	admins map[int64]bool
 
 	// hltvResolver — воркер точных ссылок HLTV; nil = выключен.
@@ -139,6 +150,7 @@ func New(b *telebot.Bot, s Storage, p PandaClient, defaultTeams []domain.TeamInf
 		admins:         admins,
 		awaitingHour:   make(map[int64]bool),
 		awaitingTZ:     make(map[int64]bool),
+		reminderSent:   make(map[reminderKey]map[int64]struct{}),
 		broadcastCh:    make(chan BroadcastTask, 10000),
 		mainMenu:       menu,
 		btnSchedule:    menu.Text("📅 Узнать расписание"),
