@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,7 +33,7 @@ func NewTelegramPoller(cfg *config.Config) (telebot.Poller, error) {
 	}
 	mode, _ := config.NormalizeTelegramMode(cfg.TelegramMode)
 	if mode != config.TelegramModeWebhook {
-		return &telebot.LongPoller{Timeout: 10 * time.Second}, nil
+		return &retryPoller{timeout: 10 * time.Second}, nil
 	}
 	return NewWebhookPoller(cfg.WebhookListen, cfg.WebhookPublicURL, cfg.WebhookSecret)
 }
@@ -54,6 +56,64 @@ func PrepareTelegramMode(tb *telebot.Bot, cfg *config.Config) {
 	slog.Info("Режим получения апдейтов Telegram", slog.String("mode", mode))
 }
 
+// retryPoller — long polling с паузой после ошибки getUpdates и выходом
+// по stop, даже если отправка апдейта в канал ещё не прошла.
+type retryPoller struct {
+	timeout time.Duration
+	offset  int
+}
+
+func (p *retryPoller) Poll(b *telebot.Bot, dest chan telebot.Update, stop chan struct{}) {
+	backoff := time.Second
+	const maxBackoff = 30 * time.Second
+	for {
+		select {
+		case <-stop:
+			return
+		default:
+		}
+
+		params := map[string]string{
+			"offset":          strconv.Itoa(p.offset),
+			"timeout":         strconv.Itoa(int(p.timeout / time.Second)),
+			"allowed_updates": "null",
+		}
+		data, err := b.Raw("getUpdates", params)
+		if err != nil {
+			slog.Warn("getUpdates", slog.String("error", redactToken(err, b.Token)))
+		} else {
+			var resp struct {
+				Result []telebot.Update `json:"result"`
+			}
+			if err = json.Unmarshal(data, &resp); err != nil {
+				slog.Warn("getUpdates: не разобрали ответ", slog.String("error", redactToken(err, b.Token)))
+			} else {
+				backoff = time.Second
+				for _, upd := range resp.Result {
+					if upd.ID >= p.offset {
+						p.offset = upd.ID + 1
+					}
+					select {
+					case dest <- upd:
+					case <-stop:
+						return
+					}
+				}
+				continue
+			}
+		}
+
+		select {
+		case <-stop:
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < maxBackoff {
+			backoff *= 2
+		}
+	}
+}
+
 // WebhookPoller принимает апдейты по HTTP за reverse proxy. Заменяет
 // telebot.Webhook: тот паникует на остановке (повторный close(stop))
 // и молча игнорирует ошибки HTTP-сервера и setWebhook.
@@ -61,6 +121,9 @@ type WebhookPoller struct {
 	listener  net.Listener
 	publicURL string
 	secret    string
+	// OnServeExit вызывается, если HTTP-сервер умер сам.
+	// Из него нельзя синхронно ждать Poll: Poll уже выходит.
+	OnServeExit func(error)
 }
 
 // NewWebhookPoller сразу занимает порт, чтобы конфликт был виден на старте.
@@ -102,8 +165,12 @@ func (p *WebhookPoller) Poll(b *telebot.Bot, dest chan telebot.Update, stop chan
 	select {
 	case <-stop:
 	case err := <-serveErr:
-		slog.Error("HTTP-сервер webhook остановился, апдейты не принимаются", slog.Any("error", err))
-		<-stop
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("HTTP-сервер webhook остановился, апдейты не принимаются", slog.Any("error", err))
+			if p.OnServeExit != nil {
+				p.OnServeExit(err)
+			}
+		}
 	}
 }
 
@@ -158,6 +225,7 @@ func (p *WebhookPoller) handler(dest chan<- telebot.Update, stop <-chan struct{}
 		case <-stop:
 			http.Error(w, "shutting down", http.StatusServiceUnavailable)
 		case <-r.Context().Done():
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
 		}
 	})
 }

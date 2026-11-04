@@ -35,7 +35,7 @@ func TestNextPollDelay(t *testing.T) {
 		{
 			name:      "остаток ровно 40% — выключение",
 			remaining: 400, limit: 1000, reqs: 1,
-			fallback:        fallback,
+			fallback:       fallback,
 			wantDelay:      fallback,
 			wantMode:       paceFallback,
 			wantRestricted: true,
@@ -43,7 +43,7 @@ func TestNextPollDelay(t *testing.T) {
 		{
 			name:      "остаток ниже 40%",
 			remaining: 100, limit: 1000, reqs: 1,
-			fallback:        fallback,
+			fallback:       fallback,
 			wantDelay:      fallback,
 			wantMode:       paceFallback,
 			wantRestricted: true,
@@ -51,7 +51,7 @@ func TestNextPollDelay(t *testing.T) {
 		{
 			name:      "после выключения остаток 45% — ещё ждём",
 			remaining: 450, limit: 1000, reqs: 1,
-			fallback:        fallback,
+			fallback:       fallback,
 			wasRestricted:  true,
 			wantDelay:      fallback,
 			wantMode:       paceFallback,
@@ -60,7 +60,7 @@ func TestNextPollDelay(t *testing.T) {
 		{
 			name:      "после выключения остаток ровно 50% — ещё ждём",
 			remaining: 500, limit: 1000, reqs: 1,
-			fallback:        fallback,
+			fallback:       fallback,
 			wasRestricted:  true,
 			wantDelay:      fallback,
 			wantMode:       paceFallback,
@@ -69,7 +69,7 @@ func TestNextPollDelay(t *testing.T) {
 		{
 			name:      "после выключения остаток 51% — снова динамика",
 			remaining: 501, limit: 1000, reqs: 1,
-			fallback:       fallback,
+			fallback:      fallback,
 			wasRestricted: true,
 			wantDelay:     time.Hour / 500,
 			wantMode:      paceDynamic,
@@ -91,7 +91,7 @@ func TestNextPollDelay(t *testing.T) {
 		{
 			name:      "нет заголовка сохраняет restricted",
 			remaining: -1, limit: 1000, reqs: 1,
-			fallback:        fallback,
+			fallback:       fallback,
 			wasRestricted:  true,
 			wantDelay:      fallback,
 			wantMode:       paceFallback,

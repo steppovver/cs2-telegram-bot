@@ -43,6 +43,9 @@ func (b *Bot) loggingMiddleware(next telebot.HandlerFunc) telebot.HandlerFunc {
 }
 
 func (b *Bot) handleStart(c telebot.Context) error {
+	if c.Sender() != nil {
+		b.clearDialog(c.Sender().ID)
+	}
 	return c.Send("Привет! Выбери нужное действие в меню ниже:", b.mainMenu, telebot.NoPreview)
 }
 
@@ -51,6 +54,7 @@ func (b *Bot) handleSubscribe(c telebot.Context) error {
 		return nil
 	}
 	userID := c.Sender().ID
+	b.clearDialog(userID)
 	subs, err := b.storage.GetUserSubscriptions(userID)
 	if err != nil {
 		slog.Error("Ошибка получения подписок", slog.Int64("user_id", userID), slog.Any("error", err))
@@ -111,6 +115,7 @@ func (b *Bot) handleSchedule(c telebot.Context) error {
 		return nil
 	}
 	userID := c.Sender().ID
+	b.clearDialog(userID)
 	text, err := b.buildScheduleView(userID)
 	if err != nil {
 		slog.Error("Ошибка получения расписания", slog.Int64("user_id", userID), slog.Any("error", err))

@@ -239,13 +239,14 @@ ssh -p 22 root@HOST "apt install --allow-downgrades -y /var/cache/cs2bot-debs/cs
 
 ```bash
 ssh -p 22 root@HOST '
-  systemctl stop cs2bot cs2bot-teams-puller.timer cs2bot-teams-puller.service
+  systemctl stop cs2bot cs2bot-teams-puller.timer cs2bot-teams-puller.service cs2bot-backup.timer
   cd /var/lib/cs2bot
   # обязательно убрать sidecar WAL, иначе SQLite накатит его поверх снимка
   rm -f bot.db-wal bot.db-shm
-  gzip -dc backups/bot-YYYY-MM-DD-HHMMSS.db.gz > bot.db
+  gzip -dc backups/bot-YYYY-MM-DD-HHMMSS.db.gz > bot.db.tmp
+  mv -f bot.db.tmp bot.db
   chown cs2bot:cs2bot bot.db
-  systemctl start cs2bot cs2bot-teams-puller.timer
+  systemctl start cs2bot cs2bot-teams-puller.timer cs2bot-backup.timer
   systemctl is-active cs2bot
 '
 ```
@@ -278,7 +279,8 @@ deploy/            nfpm.yaml, build-deb.sh, deploy.sh, debian/*, systemd-юни�
 
 - Хранилище — SQLite в WAL-режиме, на проде файл `/var/lib/cs2bot/bot.db`.
 - Деплой — пакет `.deb` (`deploy/build-deb.sh` / `deploy/deploy.sh`); бэкап БД —
-  systemd timer `cs2bot-backup.timer` (ежедневно 04:00).
+  systemd timer `cs2bot-backup.timer` (ежедневно 04:00). Без явного пути
+  бэкап берёт `db_path` из `/etc/cs2bot/config.json`.
 - Telegram — long polling или webhook (`telegram_mode`), только **один инстанс** на токен.
 - Воркеры: один опрос live/предстоящих/завершённых матчей с динамическим
   темпом (50% лимита PandaScore в час; выключение при остатке ≤ 40%,

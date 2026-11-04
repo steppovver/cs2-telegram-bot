@@ -102,6 +102,9 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if wp, ok := poller.(*bot.WebhookPoller); ok {
+		wp.OnServeExit = func(error) { stop() }
+	}
 
 	// Создаем WaitGroup для отслеживания горутин
 	var wg sync.WaitGroup

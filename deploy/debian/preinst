@@ -2,25 +2,49 @@
 # preinst: остановить сервис и снять predeploy-бэкап перед распаковкой.
 set -euo pipefail
 
-stop_services() {
-  if command -v systemctl >/dev/null 2>&1; then
-    if systemctl is-active --quiet cs2bot 2>/dev/null; then
-      systemctl stop cs2bot || true
-    fi
-    if systemctl is-active --quiet cs2bot-teams-puller.service 2>/dev/null; then
-      systemctl stop cs2bot-teams-puller.service || true
-    fi
+stopped_units=()
+
+stop_unit() {
+  local unit=$1
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$unit" 2>/dev/null; then
+    systemctl stop "$unit"
+    stopped_units+=("$unit")
   fi
+}
+
+restore_units() {
+  local unit
+  for unit in "${stopped_units[@]}"; do
+    systemctl start "$unit" || echo "ОШИБКА: не удалось запустить $unit" >&2
+  done
+}
+
+# Путь к базе из config.json. Относительный db_path считается от /var/lib/cs2bot.
+resolve_db_path() {
+  local cfg=/etc/cs2bot/config.json
+  local p=""
+  if [ -f "$cfg" ]; then
+    p=$(sed -n 's/.*"db_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$cfg" | head -1)
+  fi
+  if [ -z "$p" ]; then
+    printf '%s\n' /var/lib/cs2bot/bot.db
+    return
+  fi
+  case "$p" in
+    /*) printf '%s\n' "$p" ;;
+    *) printf '/var/lib/cs2bot/%s\n' "$p" ;;
+  esac
 }
 
 # Снимок БД до замены файлов. Нет базы — нечего бэкапить (например, бот
 # ещё ни разу не запускался), обновление при этом не блокируем.
 predeploy_backup() {
-  local db=/var/lib/cs2bot/bot.db
+  local db
+  db=$(resolve_db_path)
   [ -f "$db" ] || return 0
 
   if command -v cs2bot-backup >/dev/null 2>&1 && getent passwd cs2bot >/dev/null; then
-    if ! runuser -u cs2bot -- cs2bot-backup --prefix predeploy; then
+    if ! runuser -u cs2bot -- cs2bot-backup --prefix predeploy "$db"; then
       echo "ОШИБКА: predeploy-бэкап через cs2bot-backup не удался" >&2
       return 1
     fi
@@ -58,8 +82,11 @@ sqlite_backup() {
 
 case "${1:-}" in
 install | upgrade)
-  stop_services
+  trap restore_units ERR
+  stop_unit cs2bot
+  stop_unit cs2bot-teams-puller.service
   predeploy_backup
+  trap - ERR
   ;;
 esac
 

@@ -67,14 +67,14 @@ func TestFormatScoreMessageSections(t *testing.T) {
 		{
 			ID: 1, TeamA: "G2", TeamB: "NAVI", TeamAID: 1, TeamBID: 2,
 			Status: "running", Tournament: "EPL", TournamentID: 7,
-			Time: now.Add(-20 * time.Minute),
+			Time:    now.Add(-20 * time.Minute),
 			Results: []domain.MatchResult{{TeamID: 1, Score: 0}, {TeamID: 2, Score: 0}},
 		},
 		{
 			ID: 2, TeamA: "FaZe", TeamB: "Vitality", TeamAID: 3, TeamBID: 4,
 			Status: "finished", Tournament: "EPL", TournamentID: 7,
-			Time:  now.Add(-3 * time.Hour),
-			EndAt: now.Add(-2 * time.Hour),
+			Time:    now.Add(-3 * time.Hour),
+			EndAt:   now.Add(-2 * time.Hour),
 			Results: []domain.MatchResult{{TeamID: 3, Score: 2}, {TeamID: 4, Score: 0}},
 		},
 	}

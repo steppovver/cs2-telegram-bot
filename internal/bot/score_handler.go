@@ -20,6 +20,7 @@ func (b *Bot) handleScore(c telebot.Context) error {
 		return nil
 	}
 	userID := c.Sender().ID
+	b.clearDialog(userID)
 	text, err := b.buildScoreView(userID)
 	if err != nil {
 		slog.Error("Ошибка получения матчей со счетом", slog.Int64("user_id", userID), slog.Any("error", err))

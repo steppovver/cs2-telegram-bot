@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -81,6 +82,7 @@ func (b *Bot) handleAdmin(c telebot.Context) error {
 	if c.Sender() == nil || !b.isAdmin(c.Sender().ID) {
 		return nil
 	}
+	b.clearDialog(c.Sender().ID)
 	return c.Send("🛠 <b>Админ-панель</b>", telebot.ModeHTML, b.buildAdminKeyboard(), telebot.NoPreview)
 }
 
@@ -94,8 +96,11 @@ func (b *Bot) buildAdminKeyboard() *telebot.ReplyMarkup {
 }
 
 func (b *Bot) handleAdminCallback(c telebot.Context) error {
-	if c.Callback() == nil || c.Sender() == nil || !b.isAdmin(c.Sender().ID) {
+	if c.Callback() == nil {
 		return nil
+	}
+	if c.Sender() == nil || !b.isAdmin(c.Sender().ID) {
+		return c.Respond()
 	}
 
 	var text string
@@ -120,5 +125,9 @@ func (b *Bot) handleAdminCallback(c telebot.Context) error {
 		return nil
 	}
 	// Клавиатуру прицепляем заново, чтобы панель оставалась живой.
-	return c.Edit(text, b.buildAdminKeyboard(), telebot.ModeHTML)
+	err := c.Edit(text, b.buildAdminKeyboard(), telebot.ModeHTML)
+	if err != nil && !errors.Is(err, telebot.ErrMessageNotModified) && !errors.Is(err, telebot.ErrSameMessageContent) {
+		return err
+	}
+	return nil
 }
