@@ -108,9 +108,15 @@ const (
 	filterSerie    = "serie_id"
 )
 
-// matchStatuses — все статусы, которые бот хранит и показывает.
-// canceled отсекается в mapPandaMatch.
-var matchStatuses = []string{"not_started", "running", "postponed", "finished"}
+// matchStatuses — статусы, которые поллер забирает из API.
+// canceled нужен, чтобы уже сохраненный матч снялся с расписания.
+var matchStatuses = []string{
+	domain.StatusNotStarted,
+	domain.StatusRunning,
+	domain.StatusPostponed,
+	domain.StatusFinished,
+	domain.StatusCanceled,
+}
 
 // url собирает URL страницы из фильтра.
 func (q matchesQuery) url(page int) string {

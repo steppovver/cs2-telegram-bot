@@ -163,6 +163,9 @@ func scanMatchRow(rows *sql.Rows) (domain.Match, error) {
 }
 
 func (s *Storage) ProcessMatch(m domain.Match) (domain.MatchChange, error) {
+	if m.Time.IsZero() || m.Status == domain.StatusCanceled {
+		return s.retireMatch(m)
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return domain.MatchChange{}, err
@@ -277,6 +280,45 @@ func (s *Storage) ProcessMatch(m domain.Match) (domain.MatchChange, error) {
 	return change, nil
 }
 
+// retireMatch снимает матч, который больше нельзя показывать.
+// Новую строку не вставляет. Нулевое время удаляет уже сохранённую.
+// canceled с временем оставляет строку со статусом canceled.
+func (s *Storage) retireMatch(m domain.Match) (domain.MatchChange, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return domain.MatchChange{}, err
+	}
+	defer tx.Rollback()
+
+	var dbStatus string
+	err = tx.QueryRow(`SELECT COALESCE(status, '') FROM matches WHERE id = ?`, m.ID).Scan(&dbStatus)
+	if err == sql.ErrNoRows {
+		return domain.MatchChange{}, nil
+	}
+	if err != nil {
+		return domain.MatchChange{}, err
+	}
+	if m.Time.IsZero() {
+		if _, err := tx.Exec(`DELETE FROM matches WHERE id = ?`, m.ID); err != nil {
+			return domain.MatchChange{}, fmt.Errorf("удаление матча %d без времени: %w", m.ID, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return domain.MatchChange{}, err
+		}
+		return domain.MatchChange{}, nil
+	}
+	if dbStatus == domain.StatusCanceled {
+		return domain.MatchChange{}, nil
+	}
+	if _, err := tx.Exec(`UPDATE matches SET status = ? WHERE id = ?`, domain.StatusCanceled, m.ID); err != nil {
+		return domain.MatchChange{}, fmt.Errorf("отмена матча %d: %w", m.ID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.MatchChange{}, err
+	}
+	return domain.MatchChange{StatusChanged: true, OldStatus: dbStatus}, nil
+}
+
 // sameTeamPair сравнивает пары команд без учета порядка: API не гарантирует
 // порядок opponents, и простая перестановка местами — не смена соперника.
 func sameTeamPair(a1, b1, a2, b2 string) bool {
@@ -293,7 +335,7 @@ func (s *Storage) GetScheduleMatches(userID int64, untilUnix int64, withTourname
 		SELECT `+matchSelectCols+`
 		FROM matches m
 		LEFT JOIN tournaments t ON t.id = m.tournament_id
-		WHERE `+userMatchFilter+` AND (
+		WHERE `+userMatchFilter+` AND m.status != 'canceled' AND (
 			(m.begin_at <= ? AND m.status = 'running')
 			OR (m.begin_at > ? AND (? = 0 OR m.begin_at <= ?))
 		)
@@ -547,7 +589,7 @@ func (s *Storage) GetMatchesForReminder() ([]domain.Match, error) {
 		SELECT `+matchSelectCols+`
 		FROM matches m
 		LEFT JOIN tournaments t ON t.id = m.tournament_id
-		WHERE m.begin_at > ? AND m.begin_at <= ? AND m.notified = 0
+		WHERE m.begin_at > ? AND m.begin_at <= ? AND m.notified = 0 AND m.status != 'canceled'
 	`, now, fiveMinsLater)
 	if err != nil {
 		return nil, err

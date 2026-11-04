@@ -11,6 +11,9 @@ func TestClassifyMatchUpdate(t *testing.T) {
 		wantOK                                                          bool
 	}{
 		{name: "new", isNew: true, status: StatusNotStarted, wantKind: EventNew, wantOK: true},
+		{name: "new running is start", isNew: true, status: StatusRunning, wantKind: EventStarted, wantOK: true},
+		{name: "new canceled silent", isNew: true, status: StatusCanceled, wantOK: false},
+		{name: "canceled silent", statusChanged: true, status: StatusCanceled, oldStatus: StatusNotStarted, wantOK: false},
 		{name: "new postponed", isNew: true, status: StatusPostponed, wantOK: false},
 		{name: "new finished silent", isNew: true, status: StatusFinished, wantOK: false},
 		{name: "finished opponent silent", teamsChanged: true, status: StatusFinished, wantOK: false},
