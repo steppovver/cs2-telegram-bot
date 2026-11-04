@@ -106,7 +106,7 @@ func TestFormatMatchCard(t *testing.T) {
 			{URL: "https://www.twitch.tv/bysl4m"},
 		},
 	}
-	got := formatMatchCard(m, "<b>Nemiga</b>", "<b>FURIA</b>", true, nil)
+	got := formatMatchCard(m, "Nemiga", "FURIA", teamBold, teamBold, true, nil)
 	for _, want := range []string{
 		"<b>Nemiga</b> vs <b>FURIA</b> (BO5)",
 		"Турнир:",
@@ -131,7 +131,7 @@ func TestFormatMatchCard(t *testing.T) {
 
 func TestFormatMatchCardNoOfficialNoTournament(t *testing.T) {
 	m := domain.Match{TeamA: "A", TeamB: "B"}
-	got := formatMatchCard(m, "A", "B", true, nil)
+	got := formatMatchCard(m, "A", "B", teamPlain, teamPlain, true, nil)
 	if strings.Contains(got, "Турнир:") {
 		t.Errorf("empty tournament must be skipped: %q", got)
 	}
@@ -145,7 +145,7 @@ func TestFormatMatchCardNoOfficialNoTournament(t *testing.T) {
 
 func TestFormatMatchCardTBDNoHLTV(t *testing.T) {
 	m := domain.Match{TeamA: "TBD", TeamB: "FURIA", Tournament: "EPL"}
-	got := formatMatchCard(m, "TBD", "FURIA", true, nil)
+	got := formatMatchCard(m, "TBD", "FURIA", teamPlain, teamPlain, true, nil)
 	if strings.Contains(got, "HLTV:") {
 		t.Errorf("TBD must skip HLTV: %q", got)
 	}
@@ -156,7 +156,7 @@ func TestFormatMatchCardTBDNoHLTV(t *testing.T) {
 
 func TestFormatMatchCardSkipTournament(t *testing.T) {
 	m := domain.Match{TeamA: "A", TeamB: "B", Tournament: "EPL"}
-	got := formatMatchCard(m, "A", "B", false, nil)
+	got := formatMatchCard(m, "A", "B", teamPlain, teamPlain, false, nil)
 	if strings.Contains(got, "Турнир:") {
 		t.Errorf("withTournament=false must skip: %q", got)
 	}
@@ -164,8 +164,8 @@ func TestFormatMatchCardSkipTournament(t *testing.T) {
 
 func TestFormatMatchCardMiddleLines(t *testing.T) {
 	m := domain.Match{TeamA: "A", TeamB: "B"}
-	got := formatMatchCard(m, "A", "B", true, []string{"Серия: A 1 — 0 B", "Идет: 12 мин"})
-	if !strings.Contains(got, "Серия: A 1 — 0 B\nИдет: 12 мин\nНайти трансляцию:") {
+	got := formatMatchCard(m, "A<B", "B", teamPlain, teamPlain, true, []string{"Серия: A 1 — 0 B", "Идет: 12 мин"})
+	if !strings.Contains(got, "A&lt;B vs B\nСерия: A 1 — 0 B\nИдет: 12 мин\nНайти трансляцию:") {
 		t.Errorf("middle lines between teams and streams: %q", got)
 	}
 }

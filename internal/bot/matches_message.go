@@ -8,12 +8,12 @@ import (
 )
 
 // formatMatchCard — общая карточка live / старта / напоминания / счёта.
-// teamA/teamB уже готовые HTML-фрагменты (highlight или <b>).
+// teamA/teamB — сырые имена. Экранирование и жирный/подчёркивание делает карточка.
 // withTournament=false, если турнир уже в заголовке группы (завершённые в счёте).
 // middle — строки между турниром и стримами (серия, длительность, дата).
-func formatMatchCard(m domain.Match, teamA, teamB string, withTournament bool, middle []string) string {
+func formatMatchCard(m domain.Match, teamA, teamB string, markA, markB teamMark, withTournament bool, middle []string) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%s vs %s%s\n", teamA, teamB, boSuffix(m)))
+	sb.WriteString(fmt.Sprintf("%s vs %s%s\n", renderTeam(teamA, markA), renderTeam(teamB, markB), boSuffix(m)))
 	if withTournament {
 		if line := tournamentLine(m); line != "" {
 			sb.WriteString(line + "\n")
@@ -45,12 +45,11 @@ func formatMatchesMessage(header string, live, upcoming []domain.Match, subs []d
 	if len(live) > 0 {
 		sb.WriteString("🔴 <b>Сейчас играют:</b>\n\n")
 		for i, match := range live {
-			teamA := highlightTeam(match.TeamA, match.TeamAID, subs)
-			teamB := highlightTeam(match.TeamB, match.TeamBID, subs)
 			if i > 0 {
 				sb.WriteString("➖➖➖➖➖➖➖\n")
 			}
-			sb.WriteString(formatMatchCard(match, teamA, teamB, true, nil))
+			sb.WriteString(formatMatchCard(match, match.TeamA, match.TeamB,
+				subMark(match.TeamAID, subs), subMark(match.TeamBID, subs), true, nil))
 			sb.WriteString("\n")
 		}
 		sb.WriteString("\n")

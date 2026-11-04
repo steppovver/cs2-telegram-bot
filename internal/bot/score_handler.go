@@ -138,38 +138,62 @@ func buildScoreBlock(m domain.Match, subs []domain.TeamInfo, utcOffset int, show
 	if line := durationLine(m); line != "" {
 		middle = append(middle, line)
 	}
-	return formatMatchCard(m,
-		highlightTeam(m.TeamA, m.TeamAID, subs),
-		highlightTeam(m.TeamB, m.TeamBID, subs),
+	return formatMatchCard(m, m.TeamA, m.TeamB,
+		subMark(m.TeamAID, subs), subMark(m.TeamBID, subs),
 		withTournament, middle) + "\n"
+}
+
+// teamMark — как подписать сырое имя команды после экранирования.
+type teamMark int
+
+const (
+	teamPlain teamMark = iota
+	teamBold
+	teamFavorite
+)
+
+// renderTeam экранирует имя и ставит жирный/подчёркивание. Единственное место,
+// где имя команды превращается в HTML.
+func renderTeam(name string, mark teamMark) string {
+	esc := html.EscapeString(name)
+	switch mark {
+	case teamFavorite:
+		return "<u><b>" + esc + "</b></u>"
+	case teamBold:
+		return "<b>" + esc + "</b>"
+	default:
+		return esc
+	}
+}
+
+func pushMark(favorite bool) teamMark {
+	if favorite {
+		return teamFavorite
+	}
+	return teamBold
+}
+
+func subMark(id int, subs []domain.TeamInfo) teamMark {
+	for _, sub := range subs {
+		if sub.ID == id {
+			if sub.Favorite {
+				return teamFavorite
+			}
+			return teamBold
+		}
+	}
+	return teamPlain
 }
 
 // highlightTeam подсвечивает команды пользователя в расписании, счете и дайджесте.
 // Любимая — жирным с подчёркиванием, интересная — жирным, чужая сторона — как есть.
 func highlightTeam(name string, id int, subs []domain.TeamInfo) string {
-	esc := html.EscapeString(name)
-	for _, sub := range subs {
-		if sub.ID == id {
-			if sub.Favorite {
-				return underlineBold(esc)
-			}
-			return "<b>" + esc + "</b>"
-		}
-	}
-	return esc
+	return renderTeam(name, subMark(id, subs))
 }
 
 // pushTeam — имя в пуше: обе стороны жирные, любимая ещё и подчёркнута.
 func pushTeam(name string, favorite bool) string {
-	esc := html.EscapeString(name)
-	if favorite {
-		return underlineBold(esc)
-	}
-	return "<b>" + esc + "</b>"
-}
-
-func underlineBold(esc string) string {
-	return "<u><b>" + esc + "</b></u>"
+	return renderTeam(name, pushMark(favorite))
 }
 
 // boSuffix возвращает " (BO3)" для заголовка матча. 0 = неизвестно, без суффикса.

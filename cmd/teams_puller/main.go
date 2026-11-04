@@ -68,8 +68,10 @@ func main() {
 		slog.Error("Ошибка загрузки каталога команд", slog.Any("error", err))
 		os.Exit(1)
 	}
-	if err := applyCatalog(ctx, db, teams); err != nil {
+	applied, err := storage.ApplyCatalog(ctx, db, catalogTeams(teams))
+	if err != nil {
 		slog.Error("Ошибка записи каталога команд", slog.Any("error", err))
 		os.Exit(1)
 	}
+	fmt.Printf("Готово! Команд с составом: %d, удалено пропавших команд: %d\n", applied.WithRoster, applied.RemovedTeams)
 }
