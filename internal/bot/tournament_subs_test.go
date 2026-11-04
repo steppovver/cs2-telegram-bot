@@ -57,10 +57,10 @@ func TestMatchEventRecipients(t *testing.T) {
 		ev    matchEvent
 		users []int64
 	}{
-		{"старт плей-офф: интересная, любимая и турнир без дублей", matchEvent{match: playoff, kind: eventStarted}, []int64{1, 2, 3}},
-		{"новый плей-офф матч: только любимая", matchEvent{match: playoff, kind: eventNew}, []int64{3}},
-		{"смена времени: только любимая", matchEvent{match: playoff, kind: eventTimeChanged}, []int64{3}},
-		{"старт группового: интересная и любимая", matchEvent{match: group, kind: eventStarted}, []int64{1, 3}},
+		{"старт плей-офф: интересная, любимая и турнир без дублей", matchEvent{match: playoff, kind: domain.EventStarted}, []int64{1, 2, 3}},
+		{"новый плей-офф матч: только любимая", matchEvent{match: playoff, kind: domain.EventNew}, []int64{3}},
+		{"смена времени: только любимая", matchEvent{match: playoff, kind: domain.EventTimeChanged}, []int64{3}},
+		{"старт группового: интересная и любимая", matchEvent{match: group, kind: domain.EventStarted}, []int64{1, 3}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

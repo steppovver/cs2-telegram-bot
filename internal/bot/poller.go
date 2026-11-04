@@ -47,18 +47,9 @@ func (b *Bot) StartPoller(ctx context.Context, fallback time.Duration) {
 	}
 }
 
-type matchEventKind int
-
-const (
-	eventNew matchEventKind = iota
-	eventStarted
-	eventOpponent
-	eventTimeChanged
-)
-
 type matchEvent struct {
 	match       domain.Match
-	kind        matchEventKind
+	kind        domain.EventKind
 	timeChanged bool
 	oldTime     time.Time
 	oldTeamA    string
@@ -66,29 +57,6 @@ type matchEvent struct {
 	// favA/favB — какая сторона любимая у получателя этой копии события.
 	favA bool
 	favB bool
-}
-
-// classifyMatchUpdate решает, какое уведомление слать по изменению матча.
-// postponed не даёт «новый матч»: иначе связка с CleanOldMatches повторяет
-// рассылку каждую минуту. finished — только в БД для кнопки 📊, без пуша.
-// Смена времени или соперника уходит как обычно. ok=false — событие не нужно.
-func classifyMatchUpdate(c domain.MatchChange, status string) (matchEventKind, bool) {
-	switch {
-	case status == "finished":
-		return 0, false
-	case c.IsNew && status == "postponed":
-		return 0, false
-	case c.IsNew:
-		return eventNew, true
-	case status == "running" && c.StatusChanged && c.OldStatus != "running":
-		return eventStarted, true
-	case c.TeamsChanged:
-		return eventOpponent, true
-	case c.TimeChanged && !c.MinorTimeShift:
-		return eventTimeChanged, true
-	default:
-		return 0, false
-	}
 }
 
 // mergePlayoffMatches добавляет к матчам команд плей-офф матчи серий.
@@ -270,7 +238,7 @@ func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.D
 			continue
 		}
 
-		kind, ok := classifyMatchUpdate(change, match.Status)
+		kind, ok := domain.ClassifyMatchUpdate(change, match.Status)
 		if !ok {
 			continue
 		}
@@ -305,9 +273,9 @@ func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.D
 		var started, news int
 		for _, ev := range events {
 			switch ev.kind {
-			case eventStarted:
+			case domain.EventStarted:
 				started++
-			case eventNew:
+			case domain.EventNew:
 				news++
 			}
 		}
@@ -407,7 +375,7 @@ func (b *Bot) broadcastMatchEvents(ctx context.Context, events []matchEvent) {
 	var startedIdx []int
 	var startedMatches []domain.Match
 	for i, ev := range events {
-		if ev.kind == eventStarted {
+		if ev.kind == domain.EventStarted {
 			startedIdx = append(startedIdx, i)
 			startedMatches = append(startedMatches, ev.match)
 		}
@@ -487,8 +455,8 @@ func (b *Bot) matchEventRecipients(ev matchEvent) ([]domain.MatchFan, error) {
 	if err != nil {
 		return nil, fmt.Errorf("подписчики команд: %w", err)
 	}
-	fans = fansForMatchEvent(ev.kind, fans)
-	if ev.kind != eventStarted || !ev.match.IsPlayoff || ev.match.TournamentID == 0 {
+	fans = domain.FansForMatchEvent(ev.kind, fans)
+	if ev.kind != domain.EventStarted || !ev.match.IsPlayoff || ev.match.TournamentID == 0 {
 		return fans, nil
 	}
 	tUsers, err := b.storage.GetUsersByTournamentID(ev.match.TournamentID)
@@ -508,34 +476,19 @@ func (b *Bot) matchEventRecipients(ev matchEvent) ([]domain.MatchFan, error) {
 	return fans, nil
 }
 
-// fansForMatchEvent оставляет интересных только на старте матча.
-// Любимая сторона в матче получает любое событие.
-func fansForMatchEvent(kind matchEventKind, fans []domain.MatchFan) []domain.MatchFan {
-	if kind == eventStarted {
-		return fans
-	}
-	out := make([]domain.MatchFan, 0, len(fans))
-	for _, f := range fans {
-		if f.HasFavorite() {
-			out = append(out, f)
-		}
-	}
-	return out
-}
-
 // buildCombinedUpdateMessage собирает все события цикла для одного юзера
 // в одно сообщение, группируя по типу.
 func buildCombinedUpdateMessage(evts []matchEvent, off int) string {
 	var news, started, opponents, times []matchEvent
 	for _, ev := range evts {
 		switch ev.kind {
-		case eventNew:
+		case domain.EventNew:
 			news = append(news, ev)
-		case eventStarted:
+		case domain.EventStarted:
 			started = append(started, ev)
-		case eventOpponent:
+		case domain.EventOpponent:
 			opponents = append(opponents, ev)
-		case eventTimeChanged:
+		case domain.EventTimeChanged:
 			times = append(times, ev)
 		}
 	}

@@ -6,6 +6,17 @@ import "time"
 // матча идут пачкой по 10–20 минут.
 const MinorTimeShift = 30 * time.Minute
 
+// Статусы матча. Строки PandaScore храним как есть.
+// StatusPostMatch — локальный: API больше не отдает матч, который был running.
+const (
+	StatusNotStarted = "not_started"
+	StatusRunning    = "running"
+	StatusPostponed  = "postponed"
+	StatusFinished   = "finished"
+	StatusCanceled   = "canceled"
+	StatusPostMatch  = "post_match"
+)
+
 // MatchChange — результат сохранения матча: что изменилось относительно
 // записи в БД. Old* заполнены только если IsNew == false.
 type MatchChange struct {
