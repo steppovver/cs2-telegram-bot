@@ -91,7 +91,7 @@ func TestTournamentHeader(t *testing.T) {
 func TestTournamentLine(t *testing.T) {
 	m := domain.Match{Tournament: "ESL Pro League Season 24 2026"}
 	line := tournamentLine(m)
-	if !strings.HasPrefix(line, "🏟 Турнир: <a href=\"https://www.google.com/search?") {
+	if !strings.HasPrefix(line, "Турнир: <a href=\"https://www.google.com/search?") {
 		t.Errorf("line = %q", line)
 	}
 	if got := tournamentLine(domain.Match{}); got != "" {

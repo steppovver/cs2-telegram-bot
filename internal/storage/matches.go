@@ -351,7 +351,11 @@ func (s *Storage) GetScoreMatches(userID int64, withTournaments bool) ([]domain.
 		}
 		matches = append(matches, m)
 	}
-	return matches, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	s.FillStreamChannels(matches)
+	return matches, nil
 }
 
 func (s *Storage) CleanOldMatches() {

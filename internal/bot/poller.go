@@ -464,7 +464,7 @@ func (b *Bot) broadcastMatchEvents(ctx context.Context, events []matchEvent) {
 
 	dropped := 0
 	for userID, evts := range userEvents {
-		ok, d := b.enqueueToUser(ctx, userID, buildCombinedUpdateMessage(evts, offsets[userID], b.maxStreams))
+		ok, d := b.enqueueToUser(ctx, userID, buildCombinedUpdateMessage(evts, offsets[userID]))
 		dropped += d
 		if !ok {
 			return
@@ -524,8 +524,8 @@ func fansForMatchEvent(kind matchEventKind, fans []domain.MatchFan) []domain.Mat
 }
 
 // buildCombinedUpdateMessage собирает все события цикла для одного юзера
-// в одно сообщение, группируя по типу. maxStreams: 0 = все стримы.
-func buildCombinedUpdateMessage(evts []matchEvent, off int, maxStreams int) string {
+// в одно сообщение, группируя по типу.
+func buildCombinedUpdateMessage(evts []matchEvent, off int) string {
 	var news, started, opponents, times []matchEvent
 	for _, ev := range evts {
 		switch ev.kind {
@@ -555,7 +555,7 @@ func buildCombinedUpdateMessage(evts []matchEvent, off int, maxStreams int) stri
 			}
 			teamA := pushTeam(ev.match.TeamA, ev.favA)
 			teamB := pushTeam(ev.match.TeamB, ev.favB)
-			sb.WriteString(formatMatchCard(ev.match, teamA, teamB, off, maxStreams) + "\n\n")
+			sb.WriteString(formatMatchCard(ev.match, teamA, teamB, true, nil) + "\n\n")
 		}
 	}
 	if len(news) > 0 {

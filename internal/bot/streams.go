@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"strings"
 
-	"cs2bot/internal/config"
 	"cs2bot/internal/domain"
 )
 
@@ -211,21 +210,19 @@ func promoteRelatedYouTube(official, rest []domain.MatchStream) (outOfficial, ou
 }
 
 func fallbackLine(m domain.Match) string {
-	return fmt.Sprintf(`🔍 Найти трансляцию: <a href="%s">Twitch</a> | <a href="%s">YouTube</a>`,
+	return fmt.Sprintf(`Найти трансляцию: <a href="%s">Twitch</a> | <a href="%s">YouTube</a>`,
 		html.EscapeString(twitchSearchURL(m.TeamA, m.TeamB)),
 		html.EscapeString(youtubeSearchURL(m.TeamA, m.TeamB)))
 }
 
 // streamLines возвращает строки трансляций:
-//   - "⭐ Официальная трансляция: ..." — official=true плюс похожие YouTube
+//   - "Официальная трансляция: ..." — official=true плюс похожие YouTube
 //     (если среди official ещё нет YouTube);
-//   - "📺 Смотреть: ..." — остальные, с лимитом (limit: 0 = все неофициальные);
-//   - "🔍 Найти трансляцию: ..." — fallback на поиск, всегда последней строкой.
+//   - "Найти трансляцию: ..." — fallback на поиск, всегда последней строкой.
 //
-// Если официальных нет — звездочной строки нет. Если стримов нет вообще —
+// Неофициальные стримы в текст не попадают. Если официальных нет —
 // только fallback одной строкой.
-func streamLines(m domain.Match, limit int) []string {
-	limit = config.NormalizeMaxStreams(limit)
+func streamLines(m domain.Match) []string {
 	var official, rest []domain.MatchStream
 	for _, s := range m.Streams {
 		if strings.TrimSpace(s.URL) == "" {
@@ -237,7 +234,7 @@ func streamLines(m domain.Match, limit int) []string {
 			rest = append(rest, s)
 		}
 	}
-	official, rest = promoteRelatedYouTube(official, rest)
+	official, _ = promoteRelatedYouTube(official, rest)
 	var lines []string
 	if len(official) > 0 {
 		links := make([]string, 0, len(official))
@@ -245,30 +242,13 @@ func streamLines(m domain.Match, limit int) []string {
 			links = append(links, fmt.Sprintf(`<a href="%s">%s</a>`,
 				html.EscapeString(s.URL), html.EscapeString(streamLinkText(s))))
 		}
-		lines = append(lines, "⭐ Официальная трансляция: "+strings.Join(links, " | "))
-	}
-	shown := 0
-	links := make([]string, 0, len(rest))
-	for _, s := range rest {
-		links = append(links, fmt.Sprintf(`<a href="%s">%s</a>`,
-			html.EscapeString(s.URL), html.EscapeString(streamLinkText(s))))
-		shown++
-		if limit > 0 && shown >= limit {
-			break
-		}
-		if shown >= config.MaxStreamsHardCap {
-			break
-		}
-	}
-	if len(links) > 0 {
-		lines = append(lines, "📺 Смотреть: "+strings.Join(links, " | "))
+		lines = append(lines, "Официальная трансляция: "+strings.Join(links, " | "))
 	}
 	lines = append(lines, fallbackLine(m))
 	return lines
 }
 
-// streamLine — однострочная обертка для обратной совместимости формата:
-// склеивает streamLines через \n.
-func streamLine(m domain.Match, limit int) string {
-	return strings.Join(streamLines(m, limit), "\n")
+// streamLine склеивает streamLines через \n.
+func streamLine(m domain.Match) string {
+	return strings.Join(streamLines(m), "\n")
 }

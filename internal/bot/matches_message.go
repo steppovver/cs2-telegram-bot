@@ -7,16 +7,25 @@ import (
 	"cs2bot/internal/domain"
 )
 
-// formatMatchCard — общая карточка live / старта / напоминания.
+// formatMatchCard — общая карточка live / старта / напоминания / счёта.
 // teamA/teamB уже готовые HTML-фрагменты (highlight или <b>).
-func formatMatchCard(m domain.Match, teamA, teamB string, utcOffset, maxStreams int) string {
+// withTournament=false, если турнир уже в заголовке группы (завершённые в счёте).
+// middle — строки между турниром и стримами (серия, длительность, дата).
+func formatMatchCard(m domain.Match, teamA, teamB string, withTournament bool, middle []string) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("🎮 %s vs %s%s\n", teamA, teamB, boSuffix(m)))
-	if line := tournamentLine(m); line != "" {
+	sb.WriteString(fmt.Sprintf("%s vs %s%s\n", teamA, teamB, boSuffix(m)))
+	if withTournament {
+		if line := tournamentLine(m); line != "" {
+			sb.WriteString(line + "\n")
+		}
+	}
+	for _, line := range middle {
+		if line == "" {
+			continue
+		}
 		sb.WriteString(line + "\n")
 	}
-	sb.WriteString(fmt.Sprintf("⏰ Время: %s\n", formatTGTime(m.Time, "dt", "15:04 02.01", utcOffset)))
-	sb.WriteString(streamLine(m, maxStreams))
+	sb.WriteString(streamLine(m))
 	if line := hltvMatchLine(m); line != "" {
 		sb.WriteString("\n" + line)
 	}
@@ -26,6 +35,7 @@ func formatMatchCard(m domain.Match, teamA, teamB string, utcOffset, maxStreams 
 // formatMatchesMessage собирает текст расписания/дайджеста.
 // header — опциональная шапка (у дайджеста); тело одинаковое: live, затем upcoming.
 func formatMatchesMessage(header string, live, upcoming []domain.Match, subs []domain.TeamInfo, utcOffset, maxStreams int) string {
+	_ = maxStreams // конфиг остаётся, на рендер больше не влияет
 	var sb strings.Builder
 	if header != "" {
 		sb.WriteString(header)
@@ -40,7 +50,7 @@ func formatMatchesMessage(header string, live, upcoming []domain.Match, subs []d
 			if i > 0 {
 				sb.WriteString("➖➖➖➖➖➖➖\n")
 			}
-			sb.WriteString(formatMatchCard(match, teamA, teamB, utcOffset, maxStreams))
+			sb.WriteString(formatMatchCard(match, teamA, teamB, true, nil))
 			sb.WriteString("\n")
 		}
 		sb.WriteString("\n")

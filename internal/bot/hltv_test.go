@@ -48,7 +48,7 @@ func TestAttachHLTV(t *testing.T) {
 func TestHltvMatchLine(t *testing.T) {
 	m := domain.Match{TeamA: "Team Falcons", TeamB: "TYLOO", Tournament: "ESL Pro League"}
 	line := hltvMatchLine(m)
-	if !strings.HasPrefix(line, "📊 HLTV: <a href=\"https://www.google.com/search?") {
+	if !strings.HasPrefix(line, "HLTV: <a href=\"https://www.google.com/search?") {
 		t.Errorf("hltvMatchLine = %q", line)
 	}
 	if !strings.HasSuffix(line, "\">Профиль матча</a>") {

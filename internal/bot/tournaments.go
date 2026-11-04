@@ -97,6 +97,6 @@ func tournamentLine(m domain.Match) string {
 	if strings.TrimSpace(m.Tournament) == "" {
 		return ""
 	}
-	return fmt.Sprintf(`🏟 Турнир: <a href="%s">%s</a>`,
+	return fmt.Sprintf(`Турнир: <a href="%s">%s</a>`,
 		html.EscapeString(hltv.EventURL(m.Tournament)), html.EscapeString(m.Tournament))
 }

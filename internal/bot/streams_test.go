@@ -43,10 +43,12 @@ func TestStreamLinesUsesYouTubeChannel(t *testing.T) {
 			{URL: "https://www.youtube.com/watch?v=Im3OHRzxkeg", Official: true, Channel: "ESL"},
 		},
 	}
-	lines := streamLines(m, 0)
-	joined := strings.Join(lines, "\n")
+	joined := strings.Join(streamLines(m), "\n")
 	if !strings.Contains(joined, "ESL (YouTube)") {
 		t.Errorf("lines missing channel label: %s", joined)
+	}
+	if strings.Contains(joined, "⭐") || strings.Contains(joined, "📺") || strings.Contains(joined, "🔍") {
+		t.Errorf("stream lines must have no emoji: %s", joined)
 	}
 }
 
@@ -96,17 +98,19 @@ func TestStreamLinesPromoteRelatedYouTube(t *testing.T) {
 			{URL: "https://www.twitch.tv/bysl4m"},
 		},
 	}
-	joined := strings.Join(streamLines(m, 0), "\n")
-	star := lineWith(joined, "⭐")
-	watch := lineWith(joined, "📺")
-	if !strings.Contains(star, "ESL Counter-Strike (YouTube)") {
-		t.Errorf("YouTube must be in official line: %s", star)
+	joined := strings.Join(streamLines(m), "\n")
+	official := lineWith(joined, "Официальная трансляция:")
+	if !strings.Contains(official, "ESL Counter-Strike (YouTube)") {
+		t.Errorf("YouTube must be in official line: %s", official)
 	}
-	if strings.Contains(watch, "youtube.com") || strings.Contains(watch, "ESL Counter-Strike") {
-		t.Errorf("YouTube must not stay in watch line: %s", watch)
+	if strings.Contains(joined, "bysl4m") {
+		t.Errorf("unofficial stream must not appear: %s", joined)
 	}
-	if !strings.Contains(watch, "bysl4m") {
-		t.Errorf("unrelated twitch must stay in watch: %s", watch)
+	if strings.Contains(joined, "📺") || strings.Contains(joined, "⭐") {
+		t.Errorf("no watch/star emoji: %s", joined)
+	}
+	if !strings.Contains(joined, "Найти трансляцию:") {
+		t.Errorf("fallback search missing: %s", joined)
 	}
 }
 
@@ -118,8 +122,8 @@ func TestStreamLinesPromoteESLCSA(t *testing.T) {
 			{URL: "https://www.youtube.com/watch?v=abcdEFGHijk", Channel: "ESL Counter-Strike"},
 		},
 	}
-	joined := strings.Join(streamLines(m, 0), "\n")
-	if !strings.Contains(lineWith(joined, "⭐"), "ESL Counter-Strike (YouTube)") {
+	joined := strings.Join(streamLines(m), "\n")
+	if !strings.Contains(lineWith(joined, "Официальная трансляция:"), "ESL Counter-Strike (YouTube)") {
 		t.Errorf("ESLCSA must promote YouTube: %s", joined)
 	}
 }
@@ -133,14 +137,13 @@ func TestStreamLinesSkipPromoteWhenYouTubeAlreadyOfficial(t *testing.T) {
 			{URL: "https://www.youtube.com/watch?v=unofficialVID", Channel: "ESL Counter-Strike"},
 		},
 	}
-	joined := strings.Join(streamLines(m, 0), "\n")
-	star := lineWith(joined, "⭐")
-	watch := lineWith(joined, "📺")
-	if strings.Contains(star, "unofficialVID") {
-		t.Errorf("must not promote when YT already official: %s", star)
+	joined := strings.Join(streamLines(m), "\n")
+	official := lineWith(joined, "Официальная трансляция:")
+	if strings.Contains(official, "unofficialVID") {
+		t.Errorf("must not promote when YT already official: %s", official)
 	}
-	if !strings.Contains(watch, "unofficialVID") {
-		t.Errorf("unofficial YT must stay in watch: %s", watch)
+	if strings.Contains(joined, "unofficialVID") {
+		t.Errorf("unofficial YT must not appear: %s", joined)
 	}
 }
 
@@ -152,12 +155,28 @@ func TestStreamLinesNoPromoteWithoutChannel(t *testing.T) {
 			{URL: "https://www.youtube.com/watch?v=82y98I__G4o"},
 		},
 	}
-	joined := strings.Join(streamLines(m, 0), "\n")
-	if strings.Contains(lineWith(joined, "⭐"), "youtube.com") {
+	joined := strings.Join(streamLines(m), "\n")
+	if strings.Contains(lineWith(joined, "Официальная трансляция:"), "youtube.com") {
 		t.Errorf("YouTube without Channel must not promote: %s", joined)
 	}
-	if !strings.Contains(lineWith(joined, "📺"), "youtube.com") {
-		t.Errorf("YouTube without Channel must stay in watch: %s", joined)
+	if strings.Contains(joined, "82y98I__G4o") {
+		t.Errorf("unofficial YouTube must not appear: %s", joined)
+	}
+}
+
+func TestStreamLinesNoOfficialOnlyFallback(t *testing.T) {
+	m := domain.Match{
+		TeamA: "A", TeamB: "B",
+		Streams: []domain.MatchStream{
+			{URL: "https://www.twitch.tv/bysl4m"},
+		},
+	}
+	joined := strings.Join(streamLines(m), "\n")
+	if strings.Contains(joined, "Официальная трансляция:") {
+		t.Errorf("no official line without official streams: %s", joined)
+	}
+	if !strings.HasPrefix(joined, "Найти трансляцию:") {
+		t.Errorf("only fallback expected: %s", joined)
 	}
 }
 

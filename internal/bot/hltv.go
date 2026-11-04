@@ -52,5 +52,5 @@ func hltvMatchLine(m domain.Match) string {
 	if m.TeamA == "TBD" || m.TeamB == "TBD" {
 		return ""
 	}
-	return fmt.Sprintf(`📊 HLTV: <a href="%s">Профиль матча</a>`, html.EscapeString(hltv.MatchURL(m)))
+	return fmt.Sprintf(`HLTV: <a href="%s">Профиль матча</a>`, html.EscapeString(hltv.MatchURL(m)))
 }

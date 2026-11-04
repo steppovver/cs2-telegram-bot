@@ -108,7 +108,7 @@ func TestBuildCombinedUpdateMessageStarsFavorite(t *testing.T) {
 		},
 		favA: true,
 	}
-	got := buildCombinedUpdateMessage([]matchEvent{ev}, 3, 0)
+	got := buildCombinedUpdateMessage([]matchEvent{ev}, 3)
 	if !strings.Contains(got, "<u><b>G2</b></u>") {
 		t.Fatalf("нет подчёркивания у любимой: %q", got)
 	}

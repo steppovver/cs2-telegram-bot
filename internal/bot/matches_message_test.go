@@ -93,3 +93,79 @@ func TestFormatMatchesMessageStarsFavorite(t *testing.T) {
 		t.Fatalf("подчёркивание только у любимой: %q", got)
 	}
 }
+
+func TestFormatMatchCard(t *testing.T) {
+	m := domain.Match{
+		TeamA: "Nemiga", TeamB: "FURIA",
+		NumberOfGames: 5,
+		Tournament:    "PGL Masters Bucharest 2026",
+		Time:          time.Date(2026, 11, 4, 15, 0, 0, 0, time.UTC),
+		Streams: []domain.MatchStream{
+			{URL: "https://www.twitch.tv/PGL", Official: true},
+			{URL: "https://www.youtube.com/watch?v=DTnENvX1JV0", Official: true, Channel: "PGL"},
+			{URL: "https://www.twitch.tv/bysl4m"},
+		},
+	}
+	got := formatMatchCard(m, "<b>Nemiga</b>", "<b>FURIA</b>", true, nil)
+	for _, want := range []string{
+		"<b>Nemiga</b> vs <b>FURIA</b> (BO5)",
+		"Турнир:",
+		"PGL Masters Bucharest 2026",
+		"Официальная трансляция:",
+		"PGL (Twitch)",
+		"PGL (YouTube)",
+		"Найти трансляцию:",
+		"HLTV: ",
+		"Профиль матча",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+	for _, ban := range []string{"⏰", "📺", "🎮", "⭐", "🔍", "📊", "🏟", "bysl4m", "Время:"} {
+		if strings.Contains(got, ban) {
+			t.Errorf("unexpected %q in %q", ban, got)
+		}
+	}
+}
+
+func TestFormatMatchCardNoOfficialNoTournament(t *testing.T) {
+	m := domain.Match{TeamA: "A", TeamB: "B"}
+	got := formatMatchCard(m, "A", "B", true, nil)
+	if strings.Contains(got, "Турнир:") {
+		t.Errorf("empty tournament must be skipped: %q", got)
+	}
+	if strings.Contains(got, "Официальная трансляция:") {
+		t.Errorf("no official line without streams: %q", got)
+	}
+	if !strings.Contains(got, "Найти трансляцию:") {
+		t.Errorf("fallback required: %q", got)
+	}
+}
+
+func TestFormatMatchCardTBDNoHLTV(t *testing.T) {
+	m := domain.Match{TeamA: "TBD", TeamB: "FURIA", Tournament: "EPL"}
+	got := formatMatchCard(m, "TBD", "FURIA", true, nil)
+	if strings.Contains(got, "HLTV:") {
+		t.Errorf("TBD must skip HLTV: %q", got)
+	}
+	if !strings.Contains(got, "Турнир:") {
+		t.Errorf("tournament still shown: %q", got)
+	}
+}
+
+func TestFormatMatchCardSkipTournament(t *testing.T) {
+	m := domain.Match{TeamA: "A", TeamB: "B", Tournament: "EPL"}
+	got := formatMatchCard(m, "A", "B", false, nil)
+	if strings.Contains(got, "Турнир:") {
+		t.Errorf("withTournament=false must skip: %q", got)
+	}
+}
+
+func TestFormatMatchCardMiddleLines(t *testing.T) {
+	m := domain.Match{TeamA: "A", TeamB: "B"}
+	got := formatMatchCard(m, "A", "B", true, []string{"Серия: A 1 — 0 B", "Идет: 12 мин"})
+	if !strings.Contains(got, "Серия: A 1 — 0 B\nИдет: 12 мин\nНайти трансляцию:") {
+		t.Errorf("middle lines between teams and streams: %q", got)
+	}
+}

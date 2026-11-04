@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"cs2bot/internal/domain"
-	"cs2bot/internal/hltv"
 
 	"gopkg.in/telebot.v3"
 )
@@ -74,7 +73,7 @@ func formatScoreMessage(matches []domain.Match, subs []domain.TeamInfo, utcOffse
 	}
 
 	var sb strings.Builder
-	writeGroup := func(title string, group []domain.Match, showDate bool, needDivider *bool) {
+	writeGroup := func(title string, group []domain.Match, needDivider *bool) {
 		if len(group) == 0 {
 			return
 		}
@@ -86,13 +85,14 @@ func formatScoreMessage(matches []domain.Match, subs []domain.TeamInfo, utcOffse
 			if i > 0 {
 				sb.WriteString("➖➖➖➖➖➖➖\n")
 			}
-			sb.WriteString(buildScoreBlock(m, subs, utcOffset, showDate))
+			sb.WriteString(buildScoreBlock(m, subs, utcOffset, false, true))
 		}
 		sb.WriteString("\n")
 		*needDivider = true
 	}
 
 	// Завершенные режем по турнирам: заголовок группы + матчи.
+	// Турнир в карточке не дублируем — он уже в заголовке группы.
 	writeFinished := func(group []tournamentGroup, needDivider *bool) {
 		if len(group) == 0 {
 			return
@@ -110,7 +110,7 @@ func formatScoreMessage(matches []domain.Match, subs []domain.TeamInfo, utcOffse
 				if mi > 0 {
 					sb.WriteString("➖➖➖➖➖➖➖\n")
 				}
-				sb.WriteString(buildScoreBlock(m, subs, utcOffset, true))
+				sb.WriteString(buildScoreBlock(m, subs, utcOffset, true, false))
 			}
 		}
 		sb.WriteString("\n")
@@ -118,31 +118,30 @@ func formatScoreMessage(matches []domain.Match, subs []domain.TeamInfo, utcOffse
 	}
 
 	needDivider := false
-	writeGroup("🔴 <b>Сейчас идут:</b>", running, false, &needDivider)
+	writeGroup("🔴 <b>Сейчас идут:</b>", running, &needDivider)
 	writeFinished(groupMatchesByTournament(finished), &needDivider)
 
 	return strings.TrimSuffix(sb.String(), "\n")
 }
 
-// buildScoreBlock форматирует один матч со счетом.
+// buildScoreBlock форматирует один матч со счетом на общей карточке.
 // showDate=true добавляет строку даты проведения (для завершенных).
-// Без иконок в строках: карточек много, иконки рябят.
-func buildScoreBlock(m domain.Match, subs []domain.TeamInfo, utcOffset int, showDate bool) string {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%s vs %s\n", highlightTeam(m.TeamA, m.TeamAID, subs), highlightTeam(m.TeamB, m.TeamBID, subs)))
+// withTournament=false, если турнир уже в заголовке группы.
+func buildScoreBlock(m domain.Match, subs []domain.TeamInfo, utcOffset int, showDate, withTournament bool) string {
+	var middle []string
 	if showDate && !m.Time.IsZero() {
-		sb.WriteString(fmt.Sprintf("Сыгран: %s\n", formatTGTime(m.Time, "dt", "02.01 15:04", utcOffset)))
+		middle = append(middle, fmt.Sprintf("Сыгран: %s", formatTGTime(m.Time, "dt", "02.01 15:04", utcOffset)))
 	}
 	if line := seriesLine(m); line != "" {
-		sb.WriteString(line + "\n")
+		middle = append(middle, line)
 	}
 	if line := durationLine(m); line != "" {
-		sb.WriteString(line + "\n")
+		middle = append(middle, line)
 	}
-	if m.TeamA != "TBD" && m.TeamB != "TBD" {
-		sb.WriteString(fmt.Sprintf(`HLTV: <a href="%s">Профиль матча</a>`+"\n", html.EscapeString(hltv.MatchURL(m))))
-	}
-	return sb.String()
+	return formatMatchCard(m,
+		highlightTeam(m.TeamA, m.TeamAID, subs),
+		highlightTeam(m.TeamB, m.TeamBID, subs),
+		withTournament, middle) + "\n"
 }
 
 // highlightTeam подсвечивает команды пользователя в расписании, счете и дайджесте.
