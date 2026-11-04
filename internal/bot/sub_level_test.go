@@ -42,7 +42,7 @@ func TestTeamButtonLabel(t *testing.T) {
 	if got := teamButtonLabel("NAVI", false, false); got != "NAVI" {
 		t.Fatalf("unsubscribed label = %q", got)
 	}
-	if got := teamButtonLabel("NAVI", true, false); got != "👀 NAVI" {
+	if got := teamButtonLabel("NAVI", true, false); got != "✅ NAVI" {
 		t.Fatalf("interesting label = %q", got)
 	}
 	if got := teamButtonLabel("NAVI", true, true); got != "⭐ NAVI" {

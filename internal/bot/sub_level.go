@@ -35,7 +35,7 @@ func teamButtonLabel(name string, subscribed, favorite bool) string {
 	case subscribed && favorite:
 		return "⭐ " + name
 	case subscribed:
-		return "👀 " + name
+		return "✅ " + name
 	default:
 		return name
 	}
