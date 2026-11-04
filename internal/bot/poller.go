@@ -3,7 +3,6 @@ package bot
 import (
 	"context"
 	"fmt"
-	"html"
 	"log/slog"
 	"sort"
 	"strings"
@@ -156,13 +155,48 @@ func (b *Bot) resetPollCursor() {
 	b.pollCursorMu.Unlock()
 }
 
+type pollScope struct {
+	teamIDs  []string
+	serieIDs []string
+	seriesOK bool
+	now      time.Time
+	since    time.Time
+}
+
 func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.Duration {
 	slog.Debug("Запуск цикла обновления матчей")
 
+	scope, delay, done := b.openPollScope(ctx, fallback)
+	if done {
+		return delay
+	}
+
+	matches, seriesOK, delay, pace, cycleReqs, err := b.fetchPollMatches(ctx, fallback, scope)
+	if err != nil {
+		slog.Error("Ошибка запроса матчей из API", slog.Any("error", err))
+		// Неполный ответ — курсор не сужаем: иначе живой матч ниже границы
+		// выпадет до следующего полного прохода.
+		b.resetPollCursor()
+		return delay
+	}
+
+	events := b.collectPollEvents(matches)
+	if len(events) > 0 {
+		b.broadcastMatchEvents(ctx, events)
+	}
+	b.housekeepPoll(seriesOK, matches, scope.now)
+	b.logPollCycle(events, matches, scope.since, delay, pace, cycleReqs)
+	return delay
+}
+
+// openPollScope читает, кого опрашивать. done=true — цикл закончен,
+// delay уже посчитан (ошибка команд или не на кого подписываться).
+func (b *Bot) openPollScope(ctx context.Context, fallback time.Duration) (pollScope, time.Duration, bool) {
 	idsToFetch, err := b.storage.GetSubscribedTeamIDs()
 	if err != nil {
 		slog.Error("Ошибка получения ID команд из БД", slog.Any("error", err))
-		return b.applyPollPace(nextPollDelay(-1, 0, 0, fallback, b.paceRestricted()))
+		delay := b.applyPollPace(nextPollDelay(-1, 0, 0, fallback, b.paceRestricted()))
+		return pollScope{}, delay, true
 	}
 	// Без полного ответа по сериям нельзя чистить зависшие running:
 	// идущие турнирные матчи ушли бы в post_match.
@@ -176,16 +210,27 @@ func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.D
 		_, remaining, limit := b.panda.APIUsage()
 		pace := nextPollDelay(remaining, limit, 0, fallback, b.paceRestricted())
 		b.maybeNotifyAPIHeadroom(ctx, remaining, limit, pace.Restricted)
-		return b.applyPollPace(pace)
+		return pollScope{}, b.applyPollPace(pace), true
 	}
-
 	now := time.Now()
-	since := b.pollSinceForTeams(idsToFetch, serieIDs, now)
+	return pollScope{
+		teamIDs:  idsToFetch,
+		serieIDs: serieIDs,
+		seriesOK: seriesOK,
+		now:      now,
+		since:    b.pollSinceForTeams(idsToFetch, serieIDs, now),
+	}, 0, false
+}
 
+// fetchPollMatches забирает матчи команд и плей-офф подписанных серий
+// и считает паузу до следующего цикла. seriesOK становится false, если
+// запрос серий не удался.
+func (b *Bot) fetchPollMatches(ctx context.Context, fallback time.Duration, scope pollScope) ([]domain.Match, bool, time.Duration, pollPace, int, error) {
+	seriesOK := scope.seriesOK
 	usedBefore, _, _ := b.panda.APIUsage()
-	matches, err := b.panda.FetchMatchesByTeamIDs(ctx, idsToFetch, since)
-	if err == nil && len(serieIDs) > 0 {
-		serieMatches, serr := b.panda.FetchMatchesBySerieIDs(ctx, serieIDs, since)
+	matches, err := b.panda.FetchMatchesByTeamIDs(ctx, scope.teamIDs, scope.since)
+	if err == nil && len(scope.serieIDs) > 0 {
+		serieMatches, serr := b.panda.FetchMatchesBySerieIDs(ctx, scope.serieIDs, scope.since)
 		if serr != nil {
 			slog.Error("Ошибка запроса матчей турниров из API", slog.Any("error", serr))
 			seriesOK = false
@@ -203,23 +248,11 @@ func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.D
 	b.maybeNotifyAPIHeadroom(ctx, remaining, limit, pace.Restricted)
 	delay := b.applyPollPace(pace)
 	b.logAPIUsage()
+	return matches, seriesOK, delay, pace, cycleReqs, err
+}
 
-	if err != nil {
-		slog.Error("Ошибка запроса матчей из API", slog.Any("error", err))
-		// Неполный ответ — курсор не сужаем: иначе живой матч ниже границы
-		// выпадет до следующего полного прохода.
-		b.resetPollCursor()
-		return delay
-	}
-
-	// Собираем ID матчей из ответа API
-	apiMatchIDs := make(map[int]bool, len(matches))
-	for _, m := range matches {
-		apiMatchIDs[m.ID] = true
-	}
-
-	// Собираем события цикла, рассылка — одним сообщением на пользователя
-	// после цикла (иначе при пачке новых матчей каждому прилетает спам).
+// collectPollEvents пишет матчи и собирает события для одной рассылки.
+func (b *Bot) collectPollEvents(matches []domain.Match) []matchEvent {
 	var events []matchEvent
 	for _, match := range matches {
 		change, err := b.storage.ProcessMatch(match)
@@ -251,24 +284,30 @@ func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.D
 			oldTeamB:    change.OldTeamB,
 		})
 	}
+	return events
+}
 
-	if len(events) > 0 {
-		b.broadcastMatchEvents(ctx, events)
-	}
-
+// housekeepPoll чистит зависшие и старые строки и двигает курсор опроса.
+func (b *Bot) housekeepPoll(seriesOK bool, matches []domain.Match, now time.Time) {
 	if seriesOK {
+		apiMatchIDs := make(map[int]bool, len(matches))
+		for _, m := range matches {
+			apiMatchIDs[m.ID] = true
+		}
 		b.storage.CleanStaleRunningMatches(apiMatchIDs)
 	}
 	b.storage.CleanOldMatches()
 	b.storage.CleanFinishedTournaments()
 	if seriesOK {
 		b.rememberPollCursor(matches, now)
-	} else {
-		// Ответ по сериям неполный: курсор не сужаем, иначе плей-офф
-		// ниже границы выпадет до следующего полного прохода.
-		b.resetPollCursor()
+		return
 	}
+	// Ответ по сериям неполный: курсор не сужаем, иначе плей-офф
+	// ниже границы выпадет до следующего полного прохода.
+	b.resetPollCursor()
+}
 
+func (b *Bot) logPollCycle(events []matchEvent, matches []domain.Match, since time.Time, delay time.Duration, pace pollPace, cycleReqs int) {
 	if len(events) > 0 || len(matches) > 0 {
 		var started, news int
 		for _, ev := range events {
@@ -287,13 +326,12 @@ func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.D
 			slog.Time("since", since),
 			slog.Duration("next_delay", delay),
 			slog.Bool("pace_restricted", pace.Restricted))
-	} else {
-		slog.Debug("Цикл обновления матчей",
-			slog.Duration("next_delay", delay),
-			slog.Int("cycle_reqs", cycleReqs),
-			slog.Bool("pace_restricted", pace.Restricted))
+		return
 	}
-	return delay
+	slog.Debug("Цикл обновления матчей",
+		slog.Duration("next_delay", delay),
+		slog.Int("cycle_reqs", cycleReqs),
+		slog.Bool("pace_restricted", pace.Restricted))
 }
 
 // logAPIUsage пишет сводку использования REST API.
@@ -500,47 +538,45 @@ func buildCombinedUpdateMessage(evts []matchEvent, off int) string {
 	sort.Slice(times, func(i, j int) bool { return byTime(times[i], times[j]) })
 
 	var sb strings.Builder
-	if len(started) > 0 {
-		sb.WriteString("🔴 <b>Матчи начались!</b>\n\n")
-		for i, ev := range started {
-			if i > 0 {
-				sb.WriteString("➖➖➖➖➖➖➖\n")
-			}
-			teamA := pushTeam(ev.match.TeamA, ev.favA)
-			teamB := pushTeam(ev.match.TeamB, ev.favB)
-			sb.WriteString(formatMatchCard(ev.match, teamA, teamB, true, nil) + "\n\n")
-		}
-	}
-	if len(news) > 0 {
-		sb.WriteString("🆕 <b>Новые матчи!</b>\n\n")
-		for _, ev := range news {
-			timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
-			sb.WriteString(fmt.Sprintf("🛡 %s vs %s\n⏰ Время: %s\n\n",
-				pushTeam(ev.match.TeamA, ev.favA), pushTeam(ev.match.TeamB, ev.favB), timeStr))
-		}
-	}
-	if len(opponents) > 0 {
-		sb.WriteString("🔄 <b>Определились соперники!</b>\n\n")
-		for _, ev := range opponents {
-			timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
-			timeText := fmt.Sprintf("⏰ Время: %s", timeStr)
-			if ev.timeChanged {
-				oldTimeStr := formatTGTime(ev.oldTime, "dt", "15:04 02.01", off)
-				timeText = fmt.Sprintf("<s>Время: %s</s>\n⏰ Новое: %s", oldTimeStr, timeStr)
-			}
-			sb.WriteString(fmt.Sprintf("<s>%s vs %s</s>\n🛡 %s vs %s\n%s\n\n",
-				html.EscapeString(ev.oldTeamA), html.EscapeString(ev.oldTeamB),
-				pushTeam(ev.match.TeamA, ev.favA), pushTeam(ev.match.TeamB, ev.favB), timeText))
-		}
-	}
-	if len(times) > 0 {
-		sb.WriteString("⚠️ <b>Время матчей изменено!</b>\n\n")
-		for _, ev := range times {
-			timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
+	appendEventSection(&sb, "🔴 <b>Матчи начались!</b>\n\n", started, true, func(ev matchEvent) string {
+		return formatMatchCard(ev.match, ev.match.TeamA, ev.match.TeamB, pushMark(ev.favA), pushMark(ev.favB), true, nil) + "\n\n"
+	})
+	appendEventSection(&sb, "🆕 <b>Новые матчи!</b>\n\n", news, false, func(ev matchEvent) string {
+		timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
+		return fmt.Sprintf("🛡 %s vs %s\n⏰ Время: %s\n\n",
+			renderTeam(ev.match.TeamA, pushMark(ev.favA)), renderTeam(ev.match.TeamB, pushMark(ev.favB)), timeStr)
+	})
+	appendEventSection(&sb, "🔄 <b>Определились соперники!</b>\n\n", opponents, false, func(ev matchEvent) string {
+		timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
+		timeText := fmt.Sprintf("⏰ Время: %s", timeStr)
+		if ev.timeChanged {
 			oldTimeStr := formatTGTime(ev.oldTime, "dt", "15:04 02.01", off)
-			sb.WriteString(fmt.Sprintf("🛡 %s vs %s\n<s>Старое время: %s</s>\n⏰ Новое время: %s\n\n",
-				pushTeam(ev.match.TeamA, ev.favA), pushTeam(ev.match.TeamB, ev.favB), oldTimeStr, timeStr))
+			timeText = fmt.Sprintf("<s>Время: %s</s>\n⏰ Новое: %s", oldTimeStr, timeStr)
 		}
-	}
+		return fmt.Sprintf("<s>%s vs %s</s>\n🛡 %s vs %s\n%s\n\n",
+			renderTeam(ev.oldTeamA, teamPlain), renderTeam(ev.oldTeamB, teamPlain),
+			renderTeam(ev.match.TeamA, pushMark(ev.favA)), renderTeam(ev.match.TeamB, pushMark(ev.favB)), timeText)
+	})
+	appendEventSection(&sb, "⚠️ <b>Время матчей изменено!</b>\n\n", times, false, func(ev matchEvent) string {
+		timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
+		oldTimeStr := formatTGTime(ev.oldTime, "dt", "15:04 02.01", off)
+		return fmt.Sprintf("🛡 %s vs %s\n<s>Старое время: %s</s>\n⏰ Новое время: %s\n\n",
+			renderTeam(ev.match.TeamA, pushMark(ev.favA)), renderTeam(ev.match.TeamB, pushMark(ev.favB)), oldTimeStr, timeStr)
+	})
 	return strings.TrimSuffix(sb.String(), "\n")
+}
+
+// appendEventSection пишет заголовок секции и строки событий.
+// separate ставит разделитель между карточками старта. Текст строки задаёт line.
+func appendEventSection(sb *strings.Builder, title string, evts []matchEvent, separate bool, line func(matchEvent) string) {
+	if len(evts) == 0 {
+		return
+	}
+	sb.WriteString(title)
+	for i, ev := range evts {
+		if separate && i > 0 {
+			sb.WriteString("➖➖➖➖➖➖➖\n")
+		}
+		sb.WriteString(line(ev))
+	}
 }

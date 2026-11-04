@@ -35,7 +35,7 @@ func (b *Bot) runRemindersCycle(ctx context.Context) {
 
 		build := func(_ int, favA, favB bool) string {
 			return "🔥 <b>Матч начнется с минуты на минуту!</b>\n\n" +
-				formatMatchCard(match, pushTeam(match.TeamA, favA), pushTeam(match.TeamB, favB), true, nil)
+				formatMatchCard(match, match.TeamA, match.TeamB, pushMark(favA), pushMark(favB), true, nil)
 		}
 
 		if !b.broadcastToFans(ctx, match, build) {
