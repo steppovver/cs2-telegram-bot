@@ -109,11 +109,11 @@ func TestBuildCombinedUpdateMessageStarsFavorite(t *testing.T) {
 		favA: true,
 	}
 	got := buildCombinedUpdateMessage([]matchEvent{ev}, 3, 0)
-	if !strings.Contains(got, "⭐ <b>G2</b>") {
-		t.Fatalf("нет звезды у любимой: %q", got)
+	if !strings.Contains(got, "<u><b>G2</b></u>") {
+		t.Fatalf("нет подчёркивания у любимой: %q", got)
 	}
-	if !strings.Contains(got, "<b>NAVI</b>") || strings.Contains(got, "⭐ <b>NAVI</b>") {
-		t.Fatalf("чужая сторона жирная и без звезды: %q", got)
+	if !strings.Contains(got, "<b>NAVI</b>") || strings.Contains(got, "<u><b>NAVI</b></u>") {
+		t.Fatalf("чужая сторона жирная и без подчёркивания: %q", got)
 	}
 }
 

@@ -63,8 +63,8 @@ func TestFormatMatchesMessageHighlightsSubs(t *testing.T) {
 	if !strings.Contains(got, "<b>G2</b>") {
 		t.Fatalf("ожидали жирный G2, got %q", got)
 	}
-	if strings.Contains(got, "⭐") {
-		t.Fatalf("интересная команда без звезды: %q", got)
+	if strings.Contains(got, "<u>") {
+		t.Fatalf("интересная команда без подчёркивания: %q", got)
 	}
 	if strings.Contains(got, "<b>FaZe</b>") {
 		t.Fatalf("неподписанная команда не должна быть жирной: %q", got)
@@ -83,13 +83,13 @@ func TestFormatMatchesMessageStarsFavorite(t *testing.T) {
 		TournamentBeginAt: time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC),
 	}}
 	got := formatMatchesMessage("", nil, upcoming, subs, 3, 3)
-	if !strings.Contains(got, "⭐ <b>G2</b>") {
-		t.Fatalf("ожидали звезду у любимой, got %q", got)
+	if !strings.Contains(got, "<u><b>G2</b></u>") {
+		t.Fatalf("ожидали подчёркнутый жирный G2, got %q", got)
 	}
 	if !strings.Contains(got, "<b>FaZe</b>") {
 		t.Fatalf("интересная должна остаться жирной, got %q", got)
 	}
-	if strings.Contains(got, "⭐ <b>FaZe</b>") {
-		t.Fatalf("звезда только у любимой: %q", got)
+	if strings.Contains(got, "<u><b>FaZe</b></u>") {
+		t.Fatalf("подчёркивание только у любимой: %q", got)
 	}
 }
