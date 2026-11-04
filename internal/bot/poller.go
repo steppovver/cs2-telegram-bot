@@ -63,6 +63,9 @@ type matchEvent struct {
 	oldTime     time.Time
 	oldTeamA    string
 	oldTeamB    string
+	// favA/favB — какая сторона любимая у получателя этой копии события.
+	favA bool
+	favB bool
 }
 
 // classifyMatchUpdate решает, какое уведомление слать по изменению матча.
@@ -426,7 +429,7 @@ func (b *Bot) broadcastMatchEvents(ctx context.Context, events []matchEvent) {
 
 	userEvents := make(map[int64][]matchEvent)
 	for _, ev := range events {
-		users, err := b.matchEventRecipients(ev)
+		fans, err := b.matchEventRecipients(ev)
 		if err != nil {
 			slog.Error("Ошибка получения подписчиков матча",
 				slog.String("team_a", ev.match.TeamA),
@@ -434,8 +437,11 @@ func (b *Bot) broadcastMatchEvents(ctx context.Context, events []matchEvent) {
 				slog.Any("error", err))
 			continue
 		}
-		for _, u := range users {
-			userEvents[u] = append(userEvents[u], ev)
+		for _, fan := range fans {
+			copyEv := ev
+			copyEv.favA = fan.FavoriteA
+			copyEv.favB = fan.FavoriteB
+			userEvents[fan.UserID] = append(userEvents[fan.UserID], copyEv)
 		}
 	}
 	if len(userEvents) == 0 {
@@ -474,31 +480,47 @@ func (b *Bot) broadcastMatchEvents(ctx context.Context, events []matchEvent) {
 	}
 }
 
-// matchEventRecipients — кому слать событие. Фанаты команд получают все
-// события, подписчики турнира — только старт плей-офф матча.
-func (b *Bot) matchEventRecipients(ev matchEvent) ([]int64, error) {
-	users, err := b.storage.GetUsersByTeamIDs(ev.match.TeamAID, ev.match.TeamBID)
+// matchEventRecipients — кому слать событие. Любимые получают все события,
+// интересные — только старт. Подписчики турнира добавляются на старт плей-офф.
+func (b *Bot) matchEventRecipients(ev matchEvent) ([]domain.MatchFan, error) {
+	fans, err := b.storage.GetMatchFans(ev.match.TeamAID, ev.match.TeamBID)
 	if err != nil {
 		return nil, fmt.Errorf("подписчики команд: %w", err)
 	}
+	fans = fansForMatchEvent(ev.kind, fans)
 	if ev.kind != eventStarted || !ev.match.IsPlayoff || ev.match.TournamentID == 0 {
-		return users, nil
+		return fans, nil
 	}
 	tUsers, err := b.storage.GetUsersByTournamentID(ev.match.TournamentID)
 	if err != nil {
 		return nil, fmt.Errorf("подписчики турнира: %w", err)
 	}
-	seen := make(map[int64]bool, len(users))
-	for _, u := range users {
-		seen[u] = true
+	seen := make(map[int64]bool, len(fans))
+	for _, f := range fans {
+		seen[f.UserID] = true
 	}
 	for _, u := range tUsers {
 		if !seen[u] {
 			seen[u] = true
-			users = append(users, u)
+			fans = append(fans, domain.MatchFan{UserID: u})
 		}
 	}
-	return users, nil
+	return fans, nil
+}
+
+// fansForMatchEvent оставляет интересных только на старте матча.
+// Любимая сторона в матче получает любое событие.
+func fansForMatchEvent(kind matchEventKind, fans []domain.MatchFan) []domain.MatchFan {
+	if kind == eventStarted {
+		return fans
+	}
+	out := make([]domain.MatchFan, 0, len(fans))
+	for _, f := range fans {
+		if f.HasFavorite() {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // buildCombinedUpdateMessage собирает все события цикла для одного юзера
@@ -531,8 +553,8 @@ func buildCombinedUpdateMessage(evts []matchEvent, off int, maxStreams int) stri
 			if i > 0 {
 				sb.WriteString("➖➖➖➖➖➖➖\n")
 			}
-			teamA := "<b>" + html.EscapeString(ev.match.TeamA) + "</b>"
-			teamB := "<b>" + html.EscapeString(ev.match.TeamB) + "</b>"
+			teamA := pushTeam(ev.match.TeamA, ev.favA)
+			teamB := pushTeam(ev.match.TeamB, ev.favB)
 			sb.WriteString(formatMatchCard(ev.match, teamA, teamB, off, maxStreams) + "\n\n")
 		}
 	}
@@ -540,8 +562,8 @@ func buildCombinedUpdateMessage(evts []matchEvent, off int, maxStreams int) stri
 		sb.WriteString("🆕 <b>Новые матчи!</b>\n\n")
 		for _, ev := range news {
 			timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
-			sb.WriteString(fmt.Sprintf("🛡 <b>%s</b> vs <b>%s</b>\n⏰ Время: %s\n\n",
-				html.EscapeString(ev.match.TeamA), html.EscapeString(ev.match.TeamB), timeStr))
+			sb.WriteString(fmt.Sprintf("🛡 %s vs %s\n⏰ Время: %s\n\n",
+				pushTeam(ev.match.TeamA, ev.favA), pushTeam(ev.match.TeamB, ev.favB), timeStr))
 		}
 	}
 	if len(opponents) > 0 {
@@ -553,9 +575,9 @@ func buildCombinedUpdateMessage(evts []matchEvent, off int, maxStreams int) stri
 				oldTimeStr := formatTGTime(ev.oldTime, "dt", "15:04 02.01", off)
 				timeText = fmt.Sprintf("<s>Время: %s</s>\n⏰ Новое: %s", oldTimeStr, timeStr)
 			}
-			sb.WriteString(fmt.Sprintf("<s>%s vs %s</s>\n🛡 <b>%s</b> vs <b>%s</b>\n%s\n\n",
+			sb.WriteString(fmt.Sprintf("<s>%s vs %s</s>\n🛡 %s vs %s\n%s\n\n",
 				html.EscapeString(ev.oldTeamA), html.EscapeString(ev.oldTeamB),
-				html.EscapeString(ev.match.TeamA), html.EscapeString(ev.match.TeamB), timeText))
+				pushTeam(ev.match.TeamA, ev.favA), pushTeam(ev.match.TeamB, ev.favB), timeText))
 		}
 	}
 	if len(times) > 0 {
@@ -563,8 +585,8 @@ func buildCombinedUpdateMessage(evts []matchEvent, off int, maxStreams int) stri
 		for _, ev := range times {
 			timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
 			oldTimeStr := formatTGTime(ev.oldTime, "dt", "15:04 02.01", off)
-			sb.WriteString(fmt.Sprintf("🛡 <b>%s</b> vs <b>%s</b>\n<s>Старое время: %s</s>\n⏰ Новое время: %s\n\n",
-				html.EscapeString(ev.match.TeamA), html.EscapeString(ev.match.TeamB), oldTimeStr, timeStr))
+			sb.WriteString(fmt.Sprintf("🛡 %s vs %s\n<s>Старое время: %s</s>\n⏰ Новое время: %s\n\n",
+				pushTeam(ev.match.TeamA, ev.favA), pushTeam(ev.match.TeamB, ev.favB), oldTimeStr, timeStr))
 		}
 	}
 	return strings.TrimSuffix(sb.String(), "\n")

@@ -28,10 +28,10 @@ func TestMatchTournamentColumn(t *testing.T) {
 	s := openTestStorage(t)
 	now := time.Now()
 
-	if err := s.Subscribe(1, 130564, "Team Falcons"); err != nil {
+	if err := s.Subscribe(1, 130564, "Team Falcons", false); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
-	if err := s.Subscribe(1, 3248, "TYLOO"); err != nil {
+	if err := s.Subscribe(1, 3248, "TYLOO", false); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
 
@@ -136,7 +136,7 @@ func TestRemoveUserCascade(t *testing.T) {
 
 	for round := 0; round < 20; round++ {
 		uid := int64(1000 + round)
-		if err := s.Subscribe(uid, 1, "Team"); err != nil {
+		if err := s.Subscribe(uid, 1, "Team", false); err != nil {
 			t.Fatalf("Subscribe: %v", err)
 		}
 		if err := s.SetUserOffset(uid, 5); err != nil {
@@ -248,7 +248,7 @@ func TestConcurrentWrites(t *testing.T) {
 					errs <- fmt.Errorf("ProcessMatch worker %d: %w", w, err)
 					return
 				}
-				if err := s.Subscribe(int64(w*100+i), 1, "A"); err != nil {
+				if err := s.Subscribe(int64(w*100+i), 1, "A", false); err != nil {
 					errs <- fmt.Errorf("Subscribe worker %d: %w", w, err)
 					return
 				}
@@ -314,7 +314,7 @@ func TestHLTVColumns(t *testing.T) {
 	}
 
 	// GetScheduleMatches отдаёт ссылку сразу в Match.HLTVURL.
-	if err := s.Subscribe(1, 1, "G2"); err != nil {
+	if err := s.Subscribe(1, 1, "G2", false); err != nil {
 		t.Fatal(err)
 	}
 	const want = "https://www.hltv.org/matches/1/g2-vs-navi"
@@ -341,7 +341,7 @@ func TestHLTVColumns(t *testing.T) {
 func TestGetScheduleMatchesUntil(t *testing.T) {
 	s := openTestStorage(t)
 	now := time.Now()
-	if err := s.Subscribe(1, 1, "G2"); err != nil {
+	if err := s.Subscribe(1, 1, "G2", false); err != nil {
 		t.Fatal(err)
 	}
 	put := func(id int, status string, beginAt time.Time) {

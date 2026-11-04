@@ -4,11 +4,15 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"cs2bot/internal/domain"
 )
 
-func (s *Storage) Subscribe(userID, teamID int64, teamName string) error {
+// Subscribe создает или обновляет подписку. favorite=false — интересная
+// (только старт матча), true — любимая. subscribed_at ставится в текущее
+// время, чтобы клик сразу после подписки мог повысить уровень.
+func (s *Storage) Subscribe(userID, teamID int64, teamName string, favorite bool) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -21,7 +25,17 @@ func (s *Storage) Subscribe(userID, teamID int64, teamName string) error {
 	if _, err := tx.Exec(`INSERT OR IGNORE INTO teams (id, name) VALUES (?, ?)`, teamID, teamName); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT OR IGNORE INTO subscriptions (user_id, team_id) VALUES (?, ?)`, userID, teamID); err != nil {
+	fav := 0
+	if favorite {
+		fav = 1
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO subscriptions (user_id, team_id, favorite, subscribed_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(user_id, team_id) DO UPDATE SET
+			favorite = excluded.favorite,
+			subscribed_at = excluded.subscribed_at
+	`, userID, teamID, fav, time.Now().Unix()); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -56,9 +70,11 @@ func (s *Storage) GetStats() (domain.BotStats, error) {
 	return st, nil
 }
 
-func (s *Storage) GetUsersByTeamIDs(teamAID, teamBID int) ([]int64, error) {
+// GetMatchFans возвращает подписчиков любой из двух команд матча
+// и помечает, какая сторона у пользователя любимая.
+func (s *Storage) GetMatchFans(teamAID, teamBID int) ([]domain.MatchFan, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT user_id
+		SELECT user_id, team_id, favorite
 		FROM subscriptions
 		WHERE team_id IN (?, ?)
 	`, teamAID, teamBID)
@@ -67,20 +83,40 @@ func (s *Storage) GetUsersByTeamIDs(teamAID, teamBID int) ([]int64, error) {
 	}
 	defer rows.Close()
 
-	var users []int64
+	order := make([]int64, 0)
+	byUser := make(map[int64]*domain.MatchFan)
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var userID int64
+		var teamID, fav int
+		if err := rows.Scan(&userID, &teamID, &fav); err != nil {
 			return nil, err
 		}
-		users = append(users, id)
+		fan := byUser[userID]
+		if fan == nil {
+			fan = &domain.MatchFan{UserID: userID}
+			byUser[userID] = fan
+			order = append(order, userID)
+		}
+		if teamID == teamAID {
+			fan.FavoriteA = fan.FavoriteA || fav != 0
+		}
+		if teamID == teamBID {
+			fan.FavoriteB = fan.FavoriteB || fav != 0
+		}
 	}
-	return users, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	fans := make([]domain.MatchFan, 0, len(order))
+	for _, id := range order {
+		fans = append(fans, *byUser[id])
+	}
+	return fans, nil
 }
 
 func (s *Storage) GetUserSubscriptions(userID int64) ([]domain.TeamInfo, error) {
 	rows, err := s.db.Query(`
-		SELECT t.id, t.name
+		SELECT t.id, t.name, s.favorite, s.subscribed_at
 		FROM subscriptions s
 		INNER JOIN teams t ON t.id = s.team_id
 		WHERE s.user_id = ?
@@ -94,15 +130,26 @@ func (s *Storage) GetUserSubscriptions(userID int64) ([]domain.TeamInfo, error) 
 	for rows.Next() {
 		var id int
 		var name string
-		if err := rows.Scan(&id, &name); err != nil {
-			continue
+		var fav int
+		var at int64
+		if err := rows.Scan(&id, &name, &fav, &at); err != nil {
+			return nil, err
 		}
 		teams = append(teams, domain.TeamInfo{
-			ID:   id,
-			Name: name,
+			ID:           id,
+			Name:         name,
+			Favorite:     fav != 0,
+			SubscribedAt: subscribedAtFromUnix(at),
 		})
 	}
 	return teams, rows.Err()
+}
+
+func subscribedAtFromUnix(sec int64) time.Time {
+	if sec <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0)
 }
 
 func (s *Storage) GetSubscribedTeamIDs() ([]string, error) {

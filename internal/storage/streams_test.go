@@ -12,13 +12,13 @@ func TestStreamChannelsSharedAcrossMatches(t *testing.T) {
 	s := openTestStorage(t)
 	now := time.Now()
 
-	if err := s.Subscribe(1, 10, "TeamA"); err != nil {
+	if err := s.Subscribe(1, 10, "TeamA", false); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
-	if err := s.Subscribe(1, 20, "TeamB"); err != nil {
+	if err := s.Subscribe(1, 20, "TeamB", false); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
-	if err := s.Subscribe(1, 30, "TeamC"); err != nil {
+	if err := s.Subscribe(1, 30, "TeamC", false); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
 

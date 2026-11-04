@@ -145,15 +145,32 @@ func buildScoreBlock(m domain.Match, subs []domain.TeamInfo, utcOffset int, show
 	return sb.String()
 }
 
-// highlightTeam подсвечивает команды пользователя, как в расписании.
+// highlightTeam подсвечивает команды пользователя в расписании, счете и дайджесте.
+// Любимая — жирным с подчёркиванием, интересная — жирным, чужая сторона — как есть.
 func highlightTeam(name string, id int, subs []domain.TeamInfo) string {
 	esc := html.EscapeString(name)
 	for _, sub := range subs {
 		if sub.ID == id {
+			if sub.Favorite {
+				return underlineBold(esc)
+			}
 			return "<b>" + esc + "</b>"
 		}
 	}
 	return esc
+}
+
+// pushTeam — имя в пуше: обе стороны жирные, любимая ещё и подчёркнута.
+func pushTeam(name string, favorite bool) string {
+	esc := html.EscapeString(name)
+	if favorite {
+		return underlineBold(esc)
+	}
+	return "<b>" + esc + "</b>"
+}
+
+func underlineBold(esc string) string {
+	return "<u><b>" + esc + "</b></u>"
 }
 
 // boSuffix возвращает " (BO3)" для заголовка матча. 0 = неизвестно, без суффикса.

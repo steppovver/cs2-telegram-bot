@@ -129,8 +129,11 @@ func (b *Bot) enqueueToUser(ctx context.Context, userID int64, texts ...string) 
 	return true, dropped
 }
 
-func (b *Bot) broadcastToFans(ctx context.Context, match domain.Match, build func(offset int) string) bool {
-	users, err := b.storage.GetUsersByTeamIDs(match.TeamAID, match.TeamBID)
+// broadcastToFans ставит напоминание тем, у кого в матче есть любимая команда.
+// Интересная подписка напоминание не получает.
+// Группа — пояс и набор любимых сторон: звезда в тексте зависит от пользователя.
+func (b *Bot) broadcastToFans(ctx context.Context, match domain.Match, build func(offset int, favA, favB bool) string) bool {
+	fans, err := b.storage.GetMatchFans(match.TeamAID, match.TeamBID)
 	if err != nil {
 		slog.Error("Ошибка получения подписчиков матча",
 			slog.String("team_a", match.TeamA),
@@ -139,32 +142,45 @@ func (b *Bot) broadcastToFans(ctx context.Context, match domain.Match, build fun
 		return false
 	}
 
-	if len(users) == 0 {
+	favs := make([]domain.MatchFan, 0, len(fans))
+	for _, f := range fans {
+		if f.HasFavorite() {
+			favs = append(favs, f)
+		}
+	}
+	if len(favs) == 0 {
 		return true
 	}
 
-	offsets, err := b.storage.GetUserOffsets(users)
+	ids := make([]int64, len(favs))
+	for i, f := range favs {
+		ids[i] = f.UserID
+	}
+	offsets, err := b.storage.GetUserOffsets(ids)
 	if err != nil {
 		slog.Error("Ошибка получения часовых поясов", slog.Any("error", err))
-		offsets = make(map[int64]int, len(users))
+		offsets = make(map[int64]int, len(ids))
 	}
 
-	// Группируем по оффсету: один текст на группу, бизнес-логика в UTC,
-	// в пояс приводим только на рендере.
-	byOffset := make(map[int][]int64)
-	for _, userID := range users {
-		off := offsets[userID]
-		byOffset[off] = append(byOffset[off], userID)
+	type fanKey struct {
+		off  int
+		favA bool
+		favB bool
+	}
+	groups := make(map[fanKey][]int64)
+	for _, f := range favs {
+		k := fanKey{off: offsets[f.UserID], favA: f.FavoriteA, favB: f.FavoriteB}
+		groups[k] = append(groups[k], f.UserID)
 	}
 
 	slog.Info("Добавление в очередь рассылки",
 		slog.String("match", fmt.Sprintf("%s vs %s", match.TeamA, match.TeamB)),
-		slog.Int("recipients", len(users)),
-		slog.Int("offset_groups", len(byOffset)))
+		slog.Int("recipients", len(favs)),
+		slog.Int("offset_groups", len(groups)))
 
 	dropped := 0
-	for off, group := range byOffset {
-		msg := build(off)
+	for k, group := range groups {
+		msg := build(k.off, k.favA, k.favB)
 		for _, userID := range group {
 			ok, d := b.enqueueToUser(ctx, userID, msg)
 			dropped += d
@@ -178,7 +194,7 @@ func (b *Bot) broadcastToFans(ctx context.Context, match domain.Match, build fun
 		slog.Warn("Очередь рассылки переполнена, часть уведомлений отброшена",
 			slog.String("match", fmt.Sprintf("%s vs %s", match.TeamA, match.TeamB)),
 			slog.Int("dropped", dropped),
-			slog.Int("recipients", len(users)),
+			slog.Int("recipients", len(favs)),
 			slog.Int("queue_len", len(b.broadcastCh)),
 		)
 		return false
