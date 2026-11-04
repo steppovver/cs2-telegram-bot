@@ -181,9 +181,7 @@ func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.D
 	}
 
 	events := b.collectPollEvents(matches)
-	if len(events) > 0 {
-		b.broadcastMatchEvents(ctx, events)
-	}
+	b.broadcastMatchEvents(ctx, events)
 	b.housekeepPoll(seriesOK, matches, scope.now)
 	b.logPollCycle(events, matches, scope.since, delay, pace, cycleReqs)
 	return delay
@@ -434,6 +432,7 @@ func (b *Bot) broadcastMatchEvents(ctx context.Context, events []matchEvent) {
 	}
 
 	userEvents := make(map[int64][]matchEvent)
+	b.mergeHeld(userEvents)
 	for _, ev := range events {
 		fans, err := b.matchEventRecipients(ev)
 		if err != nil {
@@ -461,29 +460,69 @@ func (b *Bot) broadcastMatchEvents(ctx context.Context, events []matchEvent) {
 	offsets, err := b.storage.GetUserOffsets(ids)
 	if err != nil {
 		slog.Error("Ошибка получения часовых поясов", slog.Any("error", err))
-		offsets = make(map[int64]int, len(ids))
+		if offsets == nil {
+			offsets = make(map[int64]int, len(ids))
+		}
 	}
 
 	slog.Info("Добавление объединенных уведомлений в очередь",
 		slog.Int("events", len(events)),
 		slog.Int("recipients", len(userEvents)))
 
+	var rest []heldPush
+	failed := false
 	dropped := 0
 	for userID, evts := range userEvents {
+		if failed {
+			rest = append(rest, heldPush{userID: userID, evts: evts})
+			continue
+		}
 		ok, d := b.enqueueToUser(ctx, userID, buildCombinedUpdateMessage(evts, offsets[userID]))
 		dropped += d
-		if !ok {
-			return
+		if !ok || d > 0 {
+			failed = true
+			rest = append(rest, heldPush{userID: userID, evts: evts})
+			continue
 		}
 	}
+	b.storeHeld(rest)
 
-	if dropped > 0 {
+	if dropped > 0 || len(rest) > 0 {
 		slog.Warn("Очередь рассылки переполнена, часть уведомлений отброшена",
 			slog.Int("dropped", dropped),
+			slog.Int("held", len(rest)),
 			slog.Int("recipients", len(userEvents)),
 			slog.Int("queue_len", len(b.broadcastCh)),
 		)
 	}
+}
+
+type heldPush struct {
+	userID int64
+	evts   []matchEvent
+}
+
+func (b *Bot) mergeHeld(userEvents map[int64][]matchEvent) {
+	b.heldMu.Lock()
+	held := b.heldPushes
+	b.heldPushes = nil
+	b.heldMu.Unlock()
+	for _, h := range held {
+		userEvents[h.userID] = append(h.evts, userEvents[h.userID]...)
+	}
+}
+
+func (b *Bot) storeHeld(rest []heldPush) {
+	const maxHeld = 2000
+	if len(rest) > maxHeld {
+		slog.Warn("Слишком много недоставленных пушей, хвост сброшен",
+			slog.Int("held", len(rest)),
+			slog.Int("kept", maxHeld))
+		rest = rest[:maxHeld]
+	}
+	b.heldMu.Lock()
+	b.heldPushes = rest
+	b.heldMu.Unlock()
 }
 
 // matchEventRecipients — кому слать событие. Любимые получают все события,
@@ -499,7 +538,10 @@ func (b *Bot) matchEventRecipients(ev matchEvent) ([]domain.MatchFan, error) {
 	}
 	tUsers, err := b.storage.GetUsersByTournamentID(ev.match.TournamentID)
 	if err != nil {
-		return nil, fmt.Errorf("подписчики турнира: %w", err)
+		slog.Error("Ошибка подписчиков турнира, шлём болельщикам команд",
+			slog.Int("tournament_id", ev.match.TournamentID),
+			slog.Any("error", err))
+		return fans, nil
 	}
 	seen := make(map[int64]bool, len(fans))
 	for _, f := range fans {

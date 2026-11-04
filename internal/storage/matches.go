@@ -581,16 +581,19 @@ func (s *Storage) markStaleRunning(apiMatchIDs map[int]bool) (int64, error) {
 	return updated, nil
 }
 
-func (s *Storage) GetMatchesForReminder() ([]domain.Match, error) {
-	now := time.Now().Unix()
-	fiveMinsLater := now + (5 * 60)
+const (
+	reminderLookback = 10 * time.Minute
+	reminderLead     = 5 * time.Minute
+)
 
+func (s *Storage) GetMatchesForReminder() ([]domain.Match, error) {
+	now := time.Now()
 	rows, err := s.db.Query(`
 		SELECT `+matchSelectCols+`
 		FROM matches m
 		LEFT JOIN tournaments t ON t.id = m.tournament_id
-		WHERE m.begin_at > ? AND m.begin_at <= ? AND m.notified = 0 AND m.status != 'canceled'
-	`, now, fiveMinsLater)
+		WHERE m.status = ? AND m.notified = 0 AND m.begin_at > ? AND m.begin_at <= ?
+	`, domain.StatusNotStarted, now.Add(-reminderLookback).Unix(), now.Add(reminderLead).Unix())
 	if err != nil {
 		return nil, err
 	}
@@ -611,7 +614,19 @@ func (s *Storage) GetMatchesForReminder() ([]domain.Match, error) {
 	return matches, nil
 }
 
-func (s *Storage) MarkMatchAsNotified(matchID int) error {
-	_, err := s.db.Exec(`UPDATE matches SET notified = 1 WHERE id = ?`, matchID)
-	return err
+// MarkMatchAsNotified ставит флаг, только если матч всё ещё not_started
+// и begin_at не сдвинулся после того, как напоминание прочитали.
+// false — строка уже другая, напоминание на это время не закрываем.
+func (s *Storage) MarkMatchAsNotified(matchID int, beginAt time.Time) (bool, error) {
+	res, err := s.db.Exec(`UPDATE matches SET notified = 1
+		WHERE id = ? AND begin_at = ? AND status = ? AND notified = 0`,
+		matchID, beginAt.Unix(), domain.StatusNotStarted)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
