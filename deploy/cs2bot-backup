@@ -47,9 +47,21 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ $# -ge 1 ] && DB_PATH="$1"
+explicit_db=0
+[ $# -ge 1 ] && DB_PATH="$1" && explicit_db=1
 [ $# -ge 2 ] && BACKUP_DIR="$2"
 [ $# -ge 3 ] && KEEP="$3"
+
+# Без явного пути берём db_path из конфига. Относительный путь — от /var/lib/cs2bot.
+if [ "$explicit_db" -eq 0 ] && [ -f /etc/cs2bot/config.json ]; then
+  cfg_db=$(sed -n 's/.*"db_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/cs2bot/config.json | head -1 || true)
+  if [ -n "$cfg_db" ]; then
+    case "$cfg_db" in
+      /*) DB_PATH="$cfg_db" ;;
+      *) DB_PATH="/var/lib/cs2bot/$cfg_db" ;;
+    esac
+  fi
+fi
 
 if ! [[ "$KEEP" =~ ^[1-9][0-9]*$ ]]; then
   echo "ОШИБКА: KEEP должен быть положительным целым, получено: $KEEP" >&2

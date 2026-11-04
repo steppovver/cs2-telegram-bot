@@ -4,6 +4,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+TimeoutStartSec=1800
 User=cs2bot
 Group=cs2bot
 UMask=0077

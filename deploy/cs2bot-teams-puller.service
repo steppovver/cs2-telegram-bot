@@ -5,6 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+TimeoutStartSec=1800
 User=cs2bot
 Group=cs2bot
 WorkingDirectory=/var/lib/cs2bot

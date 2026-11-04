@@ -132,6 +132,30 @@ func (s *Storage) SetDigestEnabled(userID int64, enabled bool) error {
 	})
 }
 
+// SetOffsetAndDigestHour пишет пояс и UTC-час одной транзакцией,
+// чтобы сбой второго поля не оставлял другой местный час.
+func (s *Storage) SetOffsetAndDigestHour(userID int64, offset, hourUTC int) error {
+	if offset < MinUTCOffset || offset > MaxUTCOffset {
+		return fmt.Errorf("сдвиг должен быть от %d до %+d", MinUTCOffset, MaxUTCOffset)
+	}
+	if hourUTC < minDigestHour || hourUTC > maxDigestHour {
+		return fmt.Errorf("час должен быть от %d до %d", minDigestHour, maxDigestHour)
+	}
+	return s.withUser(userID, func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`INSERT INTO user_settings (user_id, utc_offset)
+			VALUES (?, ?)
+			ON CONFLICT(user_id) DO UPDATE SET utc_offset = excluded.utc_offset`,
+			userID, offset); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`INSERT INTO user_digest (user_id, enabled, hour)
+			VALUES (?, ?, ?)
+			ON CONFLICT(user_id) DO UPDATE SET hour = excluded.hour`,
+			userID, 0, hourUTC)
+		return err
+	})
+}
+
 // SetDigestHour пишет час в UTC (конвертация wall->UTC — задача bot-слоя).
 func (s *Storage) SetDigestHour(userID int64, hourUTC int) error {
 	if hourUTC < minDigestHour || hourUTC > maxDigestHour {

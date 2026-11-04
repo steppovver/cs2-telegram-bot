@@ -207,8 +207,8 @@ func TestNewTelegramPoller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("polling: %v", err)
 	}
-	if _, ok := p.(*telebot.LongPoller); !ok {
-		t.Fatalf("polling: got %T, want *telebot.LongPoller", p)
+	if _, ok := p.(*retryPoller); !ok {
+		t.Fatalf("polling: got %T, want *retryPoller", p)
 	}
 
 	if _, err := NewTelegramPoller(&config.Config{TelegramMode: "push"}); err == nil {

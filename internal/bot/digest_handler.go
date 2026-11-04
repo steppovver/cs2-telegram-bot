@@ -23,6 +23,7 @@ func (b *Bot) handleDigestMenu(c telebot.Context) error {
 	if c.Sender() == nil {
 		return nil
 	}
+	b.clearDialog(c.Sender().ID)
 	settings, err := b.storage.GetDigestSettings(c.Sender().ID)
 	if err != nil {
 		slog.Error("Ошибка получения настроек дайджеста", slog.Int64("user_id", c.Sender().ID), slog.Any("error", err))
@@ -83,12 +84,8 @@ func (b *Bot) handleDigestCallback(c telebot.Context) error {
 		}
 		// Сохраняем wall-time: сдвигаем хранимый UTC-час заодно с поясом.
 		newHourUTC := wantUTCHour(wall, off)
-		if err := b.storage.SetUserOffset(userID, off); err != nil {
+		if err := b.storage.SetOffsetAndDigestHour(userID, off, newHourUTC); err != nil {
 			slog.Error("Ошибка изменения пояса", slog.Int64("user_id", userID), slog.Any("error", err))
-			return c.Respond(&telebot.CallbackResponse{Text: "Не удалось сохранить."})
-		}
-		if err := b.storage.SetDigestHour(userID, newHourUTC); err != nil {
-			slog.Error("Ошибка сдвига часа дайджеста", slog.Int64("user_id", userID), slog.Any("error", err))
 			return c.Respond(&telebot.CallbackResponse{Text: "Не удалось сохранить."})
 		}
 		_ = c.Respond(&telebot.CallbackResponse{Text: fmt.Sprintf("Часовой пояс: UTC%+d", off)})
@@ -187,6 +184,12 @@ func (b *Bot) buildDigestKeyboardRaw(enabled bool, hour, utcOffset int) *telebot
 	return menu
 }
 
+// clearDialog снимает ожидание «свой час» и «свой пояс».
+func (b *Bot) clearDialog(userID int64) {
+	b.clearHourInput(userID)
+	b.clearTZInput(userID)
+}
+
 // clearHourInput снимает ожидание ввода часа (пользователь передумал / выбрал пресет).
 func (b *Bot) clearHourInput(userID int64) {
 	b.awaitingHourMu.Lock()
@@ -213,8 +216,8 @@ func (b *Bot) consumeHourInput(c telebot.Context) bool {
 	raw := strings.TrimSpace(c.Message().Text)
 	wall, err := strconv.Atoi(raw)
 	if err != nil || wall < 0 || wall > 23 {
-		_ = c.Send("Нужно число от 0 до 23. Попробуйте еще раз:", b.mainMenu, telebot.NoPreview)
-		return true
+		b.clearHourInput(userID)
+		return false
 	}
 
 	settings, err := b.storage.GetDigestSettings(userID)
@@ -273,8 +276,8 @@ func (b *Bot) consumeTZInput(c telebot.Context) bool {
 	raw := strings.TrimSpace(c.Message().Text)
 	off, ok := parseUTCOffset(raw)
 	if !ok {
-		_ = c.Send("Нужно число от -12 до +14. Например: 3, -5, +10. Попробуйте еще раз:", b.mainMenu, telebot.NoPreview)
-		return true
+		b.clearTZInput(userID)
+		return false
 	}
 
 	settings, err := b.storage.GetDigestSettings(userID)
@@ -289,20 +292,10 @@ func (b *Bot) consumeTZInput(c telebot.Context) bool {
 	wall := wallHour(settings.HourUTC, settings.UtcOffset)
 	newHourUTC := wantUTCHour(wall, off)
 
-	if err := b.storage.SetUserOffset(userID, off); err != nil {
+	if err := b.storage.SetOffsetAndDigestHour(userID, off, newHourUTC); err != nil {
 		slog.Error("Ошибка изменения пояса", slog.Int64("user_id", userID), slog.Any("error", err))
 		_ = c.Send("Не удалось сохранить. Попробуйте позже.", b.mainMenu, telebot.NoPreview)
-		b.awaitingTZMu.Lock()
-		delete(b.awaitingTZ, userID)
-		b.awaitingTZMu.Unlock()
-		return true
-	}
-	if err := b.storage.SetDigestHour(userID, newHourUTC); err != nil {
-		slog.Error("Ошибка сдвига часа дайджеста", slog.Int64("user_id", userID), slog.Any("error", err))
-		_ = c.Send("Не удалось сохранить. Попробуйте позже.", b.mainMenu, telebot.NoPreview)
-		b.awaitingTZMu.Lock()
-		delete(b.awaitingTZ, userID)
-		b.awaitingTZMu.Unlock()
+		b.clearTZInput(userID)
 		return true
 	}
 

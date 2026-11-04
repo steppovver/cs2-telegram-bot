@@ -35,6 +35,7 @@ type Storage interface {
 	SetDigestHour(userID int64, hour int) error
 	GetUserOffset(userID int64) (int, error)
 	SetUserOffset(userID int64, offset int) error
+	SetOffsetAndDigestHour(userID int64, offset, hourUTC int) error
 	GetUserOffsets(userIDs []int64) (map[int64]int, error)
 	GetDigestDueUsers(hourUTC int, slot string) ([]domain.DigestDueUser, error)
 	MarkDigestSent(userID int64, date string) error

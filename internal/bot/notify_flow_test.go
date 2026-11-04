@@ -58,10 +58,11 @@ func (s *flowStore) GetTeamsByIDs([]int) ([]domain.TeamInfo, error) { return nil
 func (s *flowStore) GetDigestSettings(int64) (domain.DigestSettings, error) {
 	return domain.DigestSettings{}, nil
 }
-func (s *flowStore) SetDigestEnabled(int64, bool) error { return nil }
-func (s *flowStore) SetDigestHour(int64, int) error     { return nil }
-func (s *flowStore) GetUserOffset(int64) (int, error)   { return 0, nil }
-func (s *flowStore) SetUserOffset(int64, int) error     { return nil }
+func (s *flowStore) SetDigestEnabled(int64, bool) error           { return nil }
+func (s *flowStore) SetDigestHour(int64, int) error               { return nil }
+func (s *flowStore) GetUserOffset(int64) (int, error)             { return 0, nil }
+func (s *flowStore) SetUserOffset(int64, int) error               { return nil }
+func (s *flowStore) SetOffsetAndDigestHour(int64, int, int) error { return nil }
 func (s *flowStore) GetDigestDueUsers(int, string) ([]domain.DigestDueUser, error) {
 	return nil, nil
 }

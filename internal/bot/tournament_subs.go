@@ -18,6 +18,7 @@ func (b *Bot) handleTournamentsMenu(c telebot.Context) error {
 	if c.Sender() == nil {
 		return nil
 	}
+	b.clearDialog(c.Sender().ID)
 	text, markup, err := b.buildTournamentsMenu(c.Sender().ID)
 	if err != nil {
 		slog.Error("Ошибка получения турниров", slog.Int64("user_id", c.Sender().ID), slog.Any("error", err))

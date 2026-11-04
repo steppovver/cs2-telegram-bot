@@ -60,8 +60,7 @@ func NormalizeSearchProvider(p string) (string, bool) {
 
 type configFile struct {
 	Config
-	BotDBPath   string `json:"bot_db_path"`
-	TeamsDBPath string `json:"teams_db_path"`
+	BotDBPath string `json:"bot_db_path"`
 }
 
 func Load(path string) (*Config, error) {

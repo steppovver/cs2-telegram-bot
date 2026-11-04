@@ -13,9 +13,10 @@ import (
 	"gopkg.in/telebot.v3"
 )
 
-// maxFloodWait ограничивает ожидание по FloodWait: дольше ждать в одном
-// горутине рассылки бессмысленно, сообщение будет дропнуто с варном.
-const maxFloodWait = 2 * time.Minute
+// maxFloodWait — дольше этого FloodWait сообщение снимается с очереди.
+// Лимит Telegram глобальный, поэтому ждать нужно весь retry_after,
+// но не дольше этого порога и не дольше остановки процесса.
+const maxFloodWait = 15 * time.Minute
 
 func (b *Bot) StartBroadcaster(ctx context.Context) {
 	// Telegram разрешает 30 сообщений в секунду (глобально).
@@ -33,19 +34,29 @@ func (b *Bot) StartBroadcaster(ctx context.Context) {
 			if errors.As(err, &flood) {
 				wait := time.Duration(flood.RetryAfter+1) * time.Second
 				if wait > maxFloodWait {
-					wait = maxFloodWait
+					slog.Warn("FloodWait слишком длинный, сообщение снято",
+						slog.Int64("user_id", task.UserID),
+						slog.Duration("retry_after", wait))
+					return
 				}
 				slog.Warn("FloodWait от Telegram, ждем и повторяем",
 					slog.Int64("user_id", task.UserID),
 					slog.Duration("wait", wait))
+				timer := time.NewTimer(wait)
 				select {
 				case <-ctx.Done():
+					timer.Stop()
 					return
-				case <-time.After(wait):
+				case <-timer.C:
 				}
 				if _, err := b.telebot.Send(telebot.ChatID(task.UserID), task.Text, telebot.ModeHTML, telebot.NoPreview); err != nil {
+					if isUserGoneError(err) {
+						b.dropGoneUser(task.UserID, err)
+						return
+					}
 					slog.Warn("Повторная отправка после FloodWait не удалась",
-						slog.Int64("user_id", task.UserID), slog.Any("error", err))
+						slog.Int64("user_id", task.UserID),
+						slog.String("error", b.redactSendErr(err)))
 				}
 				return
 			}
@@ -53,16 +64,10 @@ func (b *Bot) StartBroadcaster(ctx context.Context) {
 			// аккаунт): удаляем пользователя, иначе будем слать в пустоту
 			// вечно. Подписки и настройки чистятся каскадом по FK.
 			if isUserGoneError(err) {
-				if derr := b.storage.RemoveUser(task.UserID); derr != nil {
-					slog.Warn("Не удалось удалить мертвого получателя",
-						slog.Int64("user_id", task.UserID), slog.Any("error", derr))
-				} else {
-					slog.Info("Удален мертвый получатель",
-						slog.Int64("user_id", task.UserID), slog.String("reason", err.Error()))
-				}
+				b.dropGoneUser(task.UserID, err)
 				return
 			}
-			slog.Warn("Ошибка отправки", slog.Int64("user_id", task.UserID), slog.Any("error", err))
+			slog.Warn("Ошибка отправки", slog.Int64("user_id", task.UserID), slog.String("error", b.redactSendErr(err)))
 		}
 	}
 
@@ -103,6 +108,24 @@ func (b *Bot) StartBroadcaster(ctx context.Context) {
 			send(task)
 		}
 	}
+}
+
+func (b *Bot) dropGoneUser(userID int64, err error) {
+	if derr := b.storage.RemoveUser(userID); derr != nil {
+		slog.Warn("Не удалось удалить мертвого получателя",
+			slog.Int64("user_id", userID), slog.String("error", b.redactSendErr(derr)))
+		return
+	}
+	slog.Info("Удален мертвый получатель",
+		slog.Int64("user_id", userID), slog.String("reason", b.redactSendErr(err)))
+}
+
+func (b *Bot) redactSendErr(err error) string {
+	token := ""
+	if b.telebot != nil {
+		token = b.telebot.Token
+	}
+	return redactToken(err, token)
 }
 
 // enqueueToUser неблокирующе кладет тексты одному юзеру в очередь рассылки,
