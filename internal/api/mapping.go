@@ -8,20 +8,22 @@ import (
 )
 
 // mapPandaMatch переводит ответ API в доменную модель.
-// Возвращает ok=false для матчей, которые нельзя показать (canceled,
-// begin_at=null, нет команд).
+// ok=false, если матч нельзя ни показать, ни снять с расписания.
+// canceled и begin_at=null возвращаются: хранилище обновляет или удаляет
+// уже сохранённую строку и не вставляет новую.
 func mapPandaMatch(pm pandaMatch) (domain.Match, bool) {
 	var zero domain.Match
-	if pm.Status == "canceled" {
+	if pm.ID == 0 {
 		return zero, false
 	}
-	// begin_at=null в API -> zero time: такой матч нельзя показать
-	// и напомнить о нем, пропускаем до появления времени.
-	if pm.BeginAt.IsZero() {
-		return zero, false
+	if pm.BeginAt.IsZero() && pm.Status != domain.StatusCanceled {
+		return domain.Match{ID: pm.ID, Status: pm.Status}, true
 	}
 
 	teamA, teamB, teamAID, teamBID, ok := mapPandaTeams(pm.Opponents)
+	if pm.Status == domain.StatusCanceled && !ok {
+		return domain.Match{ID: pm.ID, Status: domain.StatusCanceled, Time: pm.BeginAt}, true
+	}
 	if !ok {
 		return zero, false
 	}

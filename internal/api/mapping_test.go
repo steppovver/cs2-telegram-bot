@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"cs2bot/internal/domain"
 )
 
 func TestMapPandaTournament(t *testing.T) {
@@ -44,8 +46,16 @@ func TestMapPandaMatchTournament(t *testing.T) {
 	}
 
 	pm.Status = "canceled"
-	if _, ok := mapPandaMatch(pm); ok {
-		t.Error("canceled должен отсекаться")
+	canceled, ok := mapPandaMatch(pm)
+	if !ok || canceled.Status != domain.StatusCanceled || canceled.ID != pm.ID {
+		t.Fatalf("canceled = (%+v, %v), want status canceled", canceled, ok)
+	}
+
+	pm.BeginAt = time.Time{}
+	pm.Status = "not_started"
+	dropped, ok := mapPandaMatch(pm)
+	if !ok || !dropped.Time.IsZero() || dropped.ID != pm.ID {
+		t.Fatalf("zero begin_at = (%+v, %v), want id without time", dropped, ok)
 	}
 }
 

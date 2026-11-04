@@ -16,10 +16,12 @@ const (
 // Смена времени или соперника уходит как обычно. ok=false — событие не нужно.
 func ClassifyMatchUpdate(c MatchChange, status string) (EventKind, bool) {
 	switch {
-	case status == StatusFinished:
+	case status == StatusFinished || status == StatusCanceled:
 		return 0, false
 	case c.IsNew && status == StatusPostponed:
 		return 0, false
+	case c.IsNew && status == StatusRunning:
+		return EventStarted, true
 	case c.IsNew:
 		return EventNew, true
 	case status == StatusRunning && c.StatusChanged && c.OldStatus != StatusRunning:
