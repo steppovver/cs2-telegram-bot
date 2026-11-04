@@ -66,6 +66,20 @@ func ApplyCatalog(ctx context.Context, db *sql.DB, teams []CatalogTeam) (Catalog
 		slog.Int("с_составом", len(roster)),
 		slog.Int("без_состава_пропущено", len(seen)-len(roster)))
 
+	var teamCount, playerCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM teams`).Scan(&teamCount); err != nil {
+		return CatalogApplyResult{}, fmt.Errorf("число команд: %w", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM players`).Scan(&playerCount); err != nil {
+		return CatalogApplyResult{}, fmt.Errorf("число игроков: %w", err)
+	}
+	if teamCount >= 4 && len(seen)*2 < teamCount {
+		return CatalogApplyResult{}, fmt.Errorf("снимок каталога слишком короткий: %d команд при %d в базе", len(seen), teamCount)
+	}
+	if playerCount > 0 && len(roster) == 0 {
+		return CatalogApplyResult{}, errors.New("снимок без составов при непустой таблице игроков, справочник не изменён")
+	}
+
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return CatalogApplyResult{}, fmt.Errorf("открытие транзакции: %w", err)

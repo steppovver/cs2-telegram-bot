@@ -166,7 +166,7 @@ func (s *Storage) cleanFinishedTournaments(now time.Time) (int64, error) {
 	}
 	defer tx.Rollback()
 
-	finished := `SELECT id FROM tournaments WHERE (end_at > 0 AND end_at < ?) OR (end_at = 0 AND begin_at < ?)`
+	finished := `SELECT id FROM tournaments WHERE (end_at > 0 AND end_at < ?) OR (end_at = 0 AND begin_at > 0 AND begin_at < ?)`
 	endedBefore := now.Add(-tournamentCleanupGrace).Unix()
 	startedBefore := now.Add(-tournamentCleanupUnknownEnd).Unix()
 

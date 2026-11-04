@@ -40,7 +40,9 @@ func (f *fakeResolveStorage) GetMatchesForHLTVResolve(from, to, retryBefore time
 	return out, nil
 }
 
-func (f *fakeResolveStorage) SetMatchHLTV(matchID int, url string, checkedAt time.Time) error {
+func (f *fakeResolveStorage) SetMatchHLTV(matchID int, url string, checkedAt time.Time, teamA, teamB string) error {
+	_ = teamA
+	_ = teamB
 	f.urls[matchID] = url
 	f.checkedAt[matchID] = checkedAt
 	return nil

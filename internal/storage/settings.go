@@ -95,7 +95,7 @@ func (s *Storage) GetUserOffsets(userIDs []int64) (map[int64]int, error) {
 		var id int64
 		var off int
 		if err := rows.Scan(&id, &off); err != nil {
-			continue
+			return out, err
 		}
 		out[id] = NormalizeUTCOffset(off)
 	}

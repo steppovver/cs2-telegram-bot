@@ -122,6 +122,30 @@ func tournamentTokens(name string) []string {
 	return out
 }
 
+func yearsDisagree(event []string, tournament string) bool {
+	slugYears := fourDigitYears(event)
+	nameYears := fourDigitYears(nameTokens(tournament))
+	if len(slugYears) == 0 || len(nameYears) == 0 {
+		return false
+	}
+	for y := range slugYears {
+		if _, ok := nameYears[y]; ok {
+			return false
+		}
+	}
+	return true
+}
+
+func fourDigitYears(tokens []string) map[string]struct{} {
+	out := make(map[string]struct{})
+	for _, t := range tokens {
+		if len(t) == 4 && isDigits(t) {
+			out[t] = struct{}{}
+		}
+	}
+	return out
+}
+
 func isDigits(s string) bool {
 	for _, r := range s {
 		if r < '0' || r > '9' {
@@ -136,6 +160,9 @@ func isDigits(s string) bool {
 // Защита от страницы старого матча тех же команд на другом сезоне.
 // Нет названия турнира — требований нет.
 func eventMatchesTournament(event []string, tournament string) bool {
+	if yearsDisagree(event, tournament) {
+		return false
+	}
 	sig := tournamentTokens(tournament)
 	if len(sig) == 0 {
 		return true
