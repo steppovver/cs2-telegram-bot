@@ -22,8 +22,11 @@ func TestBuildScoreBlockRunning(t *testing.T) {
 	}
 	subs := []domain.TeamInfo{{ID: 1, Name: "G2", Favorite: true}}
 	got := buildScoreBlock(m, subs, 3, false, true)
+	if !strings.HasPrefix(got, "<u><b>G2</b></u> vs NAVI (BO3)\n<blockquote>") {
+		t.Fatalf("title outside blockquote: %q", got)
+	}
+	inner := got[strings.Index(got, "<blockquote>")+len("<blockquote>") : strings.LastIndex(got, "</blockquote>")]
 	for _, want := range []string{
-		"<u><b>G2</b></u> vs NAVI (BO3)",
 		"Турнир:",
 		"Серия (BO3):",
 		"Идет:",
@@ -31,8 +34,8 @@ func TestBuildScoreBlockRunning(t *testing.T) {
 		"Найти трансляцию:",
 		"HLTV:",
 	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("missing %q in %q", want, got)
+		if !strings.Contains(inner, want) {
+			t.Errorf("missing %q in blockquote %q", want, inner)
 		}
 	}
 	if strings.Contains(got, "Сыгран:") {
@@ -53,11 +56,15 @@ func TestBuildScoreBlockFinishedNoTournamentDup(t *testing.T) {
 	if strings.Contains(got, "Турнир:") {
 		t.Errorf("finished under group header must not duplicate tournament: %q", got)
 	}
-	if !strings.Contains(got, "Сыгран:") {
-		t.Errorf("finished needs Сыгран: %q", got)
+	if !strings.Contains(got, "<blockquote>") || !strings.Contains(got, "</blockquote>") {
+		t.Errorf("score details need blockquote: %q", got)
 	}
-	if !strings.Contains(got, "Длился:") {
-		t.Errorf("finished needs Длился: %q", got)
+	inner := got[strings.Index(got, "<blockquote>")+len("<blockquote>") : strings.LastIndex(got, "</blockquote>")]
+	if !strings.Contains(inner, "Сыгран:") {
+		t.Errorf("finished needs Сыгран in blockquote: %q", inner)
+	}
+	if !strings.Contains(inner, "Длился:") {
+		t.Errorf("finished needs Длился in blockquote: %q", inner)
 	}
 }
 

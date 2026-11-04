@@ -11,23 +11,32 @@ import (
 // teamA/teamB уже готовые HTML-фрагменты (highlight или <b>).
 // withTournament=false, если турнир уже в заголовке группы (завершённые в счёте).
 // middle — строки между турниром и стримами (серия, длительность, дата).
+// Заголовок матча снаружи; детали в <blockquote>, чтобы Telegram склеил их полоской.
 func formatMatchCard(m domain.Match, teamA, teamB string, withTournament bool, middle []string) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("%s vs %s%s\n", teamA, teamB, boSuffix(m)))
+
+	var details strings.Builder
 	if withTournament {
 		if line := tournamentLine(m); line != "" {
-			sb.WriteString(line + "\n")
+			details.WriteString(line + "\n")
 		}
 	}
 	for _, line := range middle {
 		if line == "" {
 			continue
 		}
-		sb.WriteString(line + "\n")
+		details.WriteString(line + "\n")
 	}
-	sb.WriteString(streamLine(m))
+	details.WriteString(streamLine(m))
 	if line := hltvMatchLine(m); line != "" {
-		sb.WriteString("\n" + line)
+		details.WriteString("\n" + line)
+	}
+	body := strings.TrimSuffix(details.String(), "\n")
+	if body != "" {
+		sb.WriteString("<blockquote>")
+		sb.WriteString(body)
+		sb.WriteString("</blockquote>")
 	}
 	return sb.String()
 }
