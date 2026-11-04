@@ -290,11 +290,11 @@ func TestHLTVColumns(t *testing.T) {
 	}
 
 	// Найденная ссылка выпадает из выборки и читается через GetHLTVURLs.
-	if err := s.SetMatchHLTV(1, "https://www.hltv.org/matches/1/g2-vs-navi", now); err != nil {
+	if err := s.SetMatchHLTV(1, "https://www.hltv.org/matches/1/g2-vs-navi", now, "G2", "NAVI"); err != nil {
 		t.Fatal(err)
 	}
 	// Свежая отметка "не нашли" тоже выпадает; старая — нет.
-	if err := s.SetMatchHLTV(4, "", now); err != nil {
+	if err := s.SetMatchHLTV(4, "", now, "C", "D"); err != nil {
 		t.Fatal(err)
 	}
 	ms, _ = s.GetMatchesForHLTVResolve(now.Add(-time.Hour), now.Add(12*time.Hour), retryBefore)
@@ -402,7 +402,7 @@ func TestGetHLTVURLsEmptyAndChunked(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetMatchHLTV(700, "https://www.hltv.org/matches/1/a-vs-b", time.Now()); err != nil {
+	if err := s.SetMatchHLTV(700, "https://www.hltv.org/matches/1/a-vs-b", time.Now(), "A", "B"); err != nil {
 		t.Fatal(err)
 	}
 	ids := make([]int, 1200)

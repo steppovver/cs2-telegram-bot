@@ -186,8 +186,8 @@ func (c *Client) queryMatches(ctx context.Context, q matchesQuery) ([]domain.Mat
 }
 
 // queryChunk листает страницы одного чанка, складывая матчи в merged.
-// Навигация — по ссылке rel="next" из Link-заголовка; короткая страница
-// и выход за окно Since — страховки на случай отсутствия линка.
+// Конец списка — пустая страница или отсутствие rel="next".
+// Короткая страница со ссылкой дальше не обрывает чанк.
 func (c *Client) queryChunk(ctx context.Context, q matchesQuery, merged map[int]domain.Match) error {
 	nextURL := q.url(1)
 	for page := 1; nextURL != ""; page++ {
@@ -208,7 +208,7 @@ func (c *Client) queryChunk(ctx context.Context, q matchesQuery, merged map[int]
 				merged[m.ID] = m
 			}
 		}
-		if next == "" || len(pandaMatches) < matchesPerPage {
+		if next == "" {
 			return nil
 		}
 		nextURL = next

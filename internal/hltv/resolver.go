@@ -34,7 +34,7 @@ const (
 // Store — узкий контракт хранилища для резолвера ссылок HLTV.
 type Store interface {
 	GetMatchesForHLTVResolve(from, to, retryBefore time.Time) ([]domain.Match, error)
-	SetMatchHLTV(matchID int, url string, checkedAt time.Time) error
+	SetMatchHLTV(matchID int, url string, checkedAt time.Time, teamA, teamB string) error
 }
 
 // Resolver периодически ищет точные страницы матчей на HLTV и сохраняет URL.
@@ -127,7 +127,7 @@ func (r *Resolver) runCycle(ctx context.Context, now time.Time, pause time.Durat
 			// Отметка попытки сдвинута так, чтобы матч вернулся в выборку
 			// через errorRetry, а не в каждом цикле.
 			retryMark := now.Add(-(negativeTTL - errorRetry))
-			if err := r.store.SetMatchHLTV(m.ID, "", retryMark); err != nil {
+			if err := r.store.SetMatchHLTV(m.ID, "", retryMark, m.TeamA, m.TeamB); err != nil {
 				slog.Error("Не удалось сохранить отметку попытки HLTV", slog.Int("match_id", m.ID), slog.Any("error", err))
 			}
 			consecutiveErrors++
@@ -141,7 +141,7 @@ func (r *Resolver) runCycle(ctx context.Context, now time.Time, pause time.Durat
 		consecutiveErrors = 0
 
 		// Пустая found с checkedAt = "не нашли", повтор через negativeTTL.
-		if err := r.store.SetMatchHLTV(m.ID, found, now); err != nil {
+		if err := r.store.SetMatchHLTV(m.ID, found, now, m.TeamA, m.TeamB); err != nil {
 			slog.Error("Не удалось сохранить ссылку HLTV", slog.Int("match_id", m.ID), slog.Any("error", err))
 			continue
 		}

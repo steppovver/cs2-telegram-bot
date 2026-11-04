@@ -170,15 +170,20 @@ func (s *Storage) GetSubscribedTeamIDs() ([]string, error) {
 	return ids, rows.Err()
 }
 
+func likeContains(query string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return "%" + replacer.Replace(query) + "%"
+}
+
 func (s *Storage) SearchTeams(query string) ([]domain.SearchedTeam, error) {
 	rows, err := s.db.Query(`
 		SELECT t.id, t.name, GROUP_CONCAT(p.name, ', ')
 		FROM teams t
 		LEFT JOIN players p ON t.id = p.team_id
-		WHERE t.name LIKE ? COLLATE NOCASE
+		WHERE t.name LIKE ? ESCAPE '\' COLLATE NOCASE
 		GROUP BY t.id, t.name
 		LIMIT 10
-	`, "%"+query+"%")
+	`, likeContains(query))
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +194,7 @@ func (s *Storage) SearchTeams(query string) ([]domain.SearchedTeam, error) {
 		var t domain.SearchedTeam
 		var players sql.NullString
 		if err := rows.Scan(&t.ID, &t.Name, &players); err != nil {
-			continue
+			return nil, err
 		}
 		if players.Valid {
 			t.Players = players.String
@@ -223,7 +228,7 @@ func (s *Storage) GetTeamsByIDs(ids []int) ([]domain.TeamInfo, error) {
 		var id int
 		var name string
 		if err := rows.Scan(&id, &name); err != nil {
-			continue
+			return nil, err
 		}
 		teams = append(teams, domain.TeamInfo{
 			ID:   id,

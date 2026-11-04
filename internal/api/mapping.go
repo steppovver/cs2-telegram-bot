@@ -81,10 +81,11 @@ func mapPandaTournament(pm pandaMatch) string {
 
 // isPlayoffStage решает по стадии PandaScore, плей-офф ли это. Название
 // важнее has_bracket: бывают групповые стадии с сеткой (GSL-группы).
-// Отрицательные маркеры проверяются первыми ("Play-in Playoffs" — не плей-офф).
+// group/swiss/play-in остаются не плей-офф даже со словом playoff.
+// Явный плей-офф важнее open/qualif ("Open Playoffs", "Qualifier Playoffs").
 func isPlayoffStage(name string, hasBracket bool) bool {
 	n := strings.ToLower(strings.TrimSpace(name))
-	for _, s := range []string{"group", "swiss", "play-in", "playin", "qualif", "open"} {
+	for _, s := range []string{"group", "swiss", "play-in", "playin"} {
 		if strings.Contains(n, s) {
 			return false
 		}
@@ -92,6 +93,11 @@ func isPlayoffStage(name string, hasBracket bool) bool {
 	for _, s := range []string{"playoff", "play-off", "knockout", "bracket", "final"} {
 		if strings.Contains(n, s) {
 			return true
+		}
+	}
+	for _, s := range []string{"qualif", "open"} {
+		if strings.Contains(n, s) {
+			return false
 		}
 	}
 	return hasBracket

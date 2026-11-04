@@ -100,6 +100,19 @@ func (f *fakeSearch) Search(_ context.Context, query string) ([]string, error) {
 	return f.results, f.err
 }
 
+func TestValidateMatchURLRejectsDifferentYear(t *testing.T) {
+	m := domain.Match{TeamA: "G2", TeamB: "NAVI", Tournament: "PGL Masters Bucharest 2026"}
+	if _, ok := ValidateMatchURL("https://www.hltv.org/matches/1/g2-vs-navi-pgl-masters-bucharest-2025", m); ok {
+		t.Fatal("2025 slug matched 2026 tournament")
+	}
+	if _, ok := ValidateMatchURL("https://www.hltv.org/matches/2/g2-vs-navi-pgl-masters-bucharest-2026", m); !ok {
+		t.Fatal("same year must match")
+	}
+	if _, ok := ValidateMatchURL("https://www.hltv.org/matches/3/g2-vs-navi-pgl-masters-bucharest", m); !ok {
+		t.Fatal("slug without a year must still match")
+	}
+}
+
 func TestResolveMatchSkipsWrongCandidates(t *testing.T) {
 	m := domain.Match{ID: 1, TeamA: "Team Falcons", TeamB: "TYLOO", Tournament: "ESL Pro League Season 24 2026"}
 	sp := &fakeSearch{results: []string{

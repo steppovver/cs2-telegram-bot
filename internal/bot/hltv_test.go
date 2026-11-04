@@ -26,10 +26,10 @@ func TestAttachHLTV(t *testing.T) {
 			t.Fatalf("ProcessMatch(%d): %v", m.ID, err)
 		}
 	}
-	if err := st.SetMatchHLTV(1, "https://www.hltv.org/matches/1/a-vs-b", now); err != nil {
+	if err := st.SetMatchHLTV(1, "https://www.hltv.org/matches/1/a-vs-b", now, "G2", "NAVI"); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetMatchHLTV(2, "", now); err != nil {
+	if err := st.SetMatchHLTV(2, "", now, "A", "B"); err != nil {
 		t.Fatal(err)
 	}
 

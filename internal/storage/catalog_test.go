@@ -90,6 +90,43 @@ func TestApplyCatalogReplacesRosterAndDropsGoneTeams(t *testing.T) {
 	}
 }
 
+func TestApplyCatalogRejectsShortSnapshot(t *testing.T) {
+	s := openTestStorage(t)
+	db := s.db
+	if _, err := db.Exec(`INSERT INTO teams (id, name) VALUES (1, 'A'), (2, 'B'), (3, 'C'), (4, 'D')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO players (id, team_id, name) VALUES (10, 1, 'p')`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ApplyCatalog(context.Background(), db, []CatalogTeam{
+		{ID: 1, Name: "A", Players: []CatalogPlayer{{ID: 10, Name: "p"}}},
+	})
+	if err == nil {
+		t.Fatal("короткий снимок должен быть ошибкой")
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM teams`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 4 {
+		t.Fatalf("teams = %d, want 4", n)
+	}
+
+	_, err = ApplyCatalog(context.Background(), db, []CatalogTeam{
+		{ID: 1, Name: "A"}, {ID: 2, Name: "B"}, {ID: 3, Name: "C"}, {ID: 4, Name: "D"},
+	})
+	if err == nil {
+		t.Fatal("снимок без составов должен быть ошибкой")
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM players`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("players = %d, want 1", n)
+	}
+}
+
 func TestApplyCatalogEmptyDoesNotWrite(t *testing.T) {
 	s := openTestStorage(t)
 	db := s.db

@@ -23,7 +23,11 @@ const (
 // сеть, 429 и 5xx ждут и пробуют снова, прочий 4xx сразу ошибка.
 func fetchTeams(ctx context.Context, client *http.Client, token string) ([]pandaScoreTeam, error) {
 	var all []pandaScoreTeam
+	const maxTeamPages = 400
 	for page := 1; ; page++ {
+		if page > maxTeamPages {
+			return nil, fmt.Errorf("каталог не закончился за %d страниц", maxTeamPages)
+		}
 		if page > 1 {
 			select {
 			case <-ctx.Done():

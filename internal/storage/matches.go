@@ -177,7 +177,9 @@ func (s *Storage) ProcessMatch(m domain.Match) (domain.MatchChange, error) {
 	// ляжет в корзину "Прочие".
 	if m.TournamentID != 0 {
 		if _, err := tx.Exec(`INSERT INTO tournaments (id, name, begin_at, end_at, updated_at) VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT(id) DO UPDATE SET name = excluded.name, begin_at = excluded.begin_at,
+			ON CONFLICT(id) DO UPDATE SET
+				name = CASE WHEN excluded.name != '' THEN excluded.name ELSE tournaments.name END,
+				begin_at = CASE WHEN excluded.begin_at > 0 THEN excluded.begin_at ELSE tournaments.begin_at END,
 				end_at = CASE WHEN excluded.end_at > 0 THEN excluded.end_at ELSE tournaments.end_at END,
 				updated_at = excluded.updated_at`,
 			m.TournamentID, m.Tournament, endAtUnix(m.TournamentBeginAt), endAtUnix(m.TournamentEndAt), time.Now().Unix()); err != nil {
@@ -262,12 +264,18 @@ func (s *Storage) ProcessMatch(m domain.Match) (domain.MatchChange, error) {
 		resetHLTV = 1
 	}
 
+	streamsJSON := encodeStreams(m.Streams)
+	scoreJSON := encodeScore(m)
 	_, err = tx.Exec(
-		`UPDATE matches SET begin_at = ?, end_at = ?, team_a = ?, team_b = ?, team_a_id = ?, team_b_id = ?, status = ?, notified = ?, streams_json = ?, score_json = ?, tournament_id = ?, is_playoff = ?,
+		`UPDATE matches SET begin_at = ?, end_at = ?, team_a = ?, team_b = ?, team_a_id = ?, team_b_id = ?, status = ?, notified = ?,
+			streams_json = CASE WHEN ? = '[]' AND streams_json NOT IN ('', '[]') THEN streams_json ELSE ? END,
+			score_json = CASE WHEN ? = '[]' AND score_json NOT IN ('', '[]') THEN score_json ELSE ? END,
+			tournament_id = ?, is_playoff = ?,
 			hltv_url = CASE WHEN ? = 1 THEN '' ELSE hltv_url END,
 			hltv_checked_at = CASE WHEN ? = 1 THEN 0 ELSE hltv_checked_at END
 		WHERE id = ?`,
-		m.Time.Unix(), endAtUnix(m.EndAt), m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Status, newNotified, encodeStreams(m.Streams), encodeScore(m), m.TournamentID, boolInt(m.IsPlayoff),
+		m.Time.Unix(), endAtUnix(m.EndAt), m.TeamA, m.TeamB, m.TeamAID, m.TeamBID, m.Status, newNotified,
+		streamsJSON, streamsJSON, scoreJSON, scoreJSON, m.TournamentID, boolInt(m.IsPlayoff),
 		resetHLTV, resetHLTV, m.ID,
 	)
 	if err != nil {
@@ -331,16 +339,21 @@ func sameTeamPair(a1, b1, a2, b2 string) bool {
 // плей-офф матчи подписанных турниров.
 func (s *Storage) GetScheduleMatches(userID int64, untilUnix int64, withTournaments bool) (live, upcoming []domain.Match, err error) {
 	nowUnix := time.Now().Unix()
+	const schedulePastGrace = 6 * time.Hour
 	rows, err := s.db.Query(`
 		SELECT `+matchSelectCols+`
 		FROM matches m
 		LEFT JOIN tournaments t ON t.id = m.tournament_id
 		WHERE `+userMatchFilter+` AND m.status != 'canceled' AND (
-			(m.begin_at <= ? AND m.status = 'running')
-			OR (m.begin_at > ? AND (? = 0 OR m.begin_at <= ?))
+			m.status = 'running'
+			OR (
+				m.status IN ('not_started', 'postponed')
+				AND m.begin_at > ?
+				AND (? = 0 OR m.begin_at <= ?)
+			)
 		)
 		ORDER BY m.begin_at ASC
-	`, userID, boolInt(withTournaments), userID, nowUnix, nowUnix, untilUnix, untilUnix)
+	`, userID, boolInt(withTournaments), userID, nowUnix-int64(schedulePastGrace/time.Second), untilUnix, untilUnix)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -350,7 +363,7 @@ func (s *Storage) GetScheduleMatches(userID int64, untilUnix int64, withTourname
 	for rows.Next() {
 		m, err := scanMatchRow(rows)
 		if err != nil {
-			continue
+			return nil, nil, err
 		}
 		matches = append(matches, m)
 	}
@@ -389,7 +402,7 @@ func (s *Storage) GetScoreMatches(userID int64, withTournaments bool) ([]domain.
 	for rows.Next() {
 		m, err := scanMatchRow(rows)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		matches = append(matches, m)
 	}
@@ -413,10 +426,21 @@ func (s *Storage) CleanOldMatches() {
 
 // SetMatchHLTV сохраняет результат поиска страницы матча на HLTV.
 // Пустой url с checkedAt означает "искали, не нашли" (повтор по TTL).
-func (s *Storage) SetMatchHLTV(matchID int, url string, checkedAt time.Time) error {
-	if _, err := s.db.Exec(`UPDATE matches SET hltv_url = ?, hltv_checked_at = ? WHERE id = ?`,
-		url, checkedAt.Unix(), matchID); err != nil {
+// Пишет только если в строке всё ещё та пара команд, которую искали:
+// поздний ответ не возвращает ссылку после смены соперника.
+func (s *Storage) SetMatchHLTV(matchID int, url string, checkedAt time.Time, teamA, teamB string) error {
+	res, err := s.db.Exec(`UPDATE matches SET hltv_url = ?, hltv_checked_at = ?
+		WHERE id = ? AND ((team_a = ? AND team_b = ?) OR (team_a = ? AND team_b = ?))`,
+		url, checkedAt.Unix(), matchID, teamA, teamB, teamB, teamA)
+	if err != nil {
 		return fmt.Errorf("сохранение ссылки HLTV матча %d: %w", matchID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("сохранение ссылки HLTV матча %d: %w", matchID, err)
+	}
+	if n == 0 {
+		slog.Info("Ссылка HLTV не записана: пара команд уже другая", slog.Int("match_id", matchID))
 	}
 	return nil
 }
@@ -603,7 +627,7 @@ func (s *Storage) GetMatchesForReminder() ([]domain.Match, error) {
 	for rows.Next() {
 		m, err := scanMatchRow(rows)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		matches = append(matches, m)
 	}
