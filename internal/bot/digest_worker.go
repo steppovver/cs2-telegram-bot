@@ -59,9 +59,18 @@ func (b *Bot) runDigestCycle(ctx context.Context) {
 		slog.Int("empty", empty))
 }
 
+// digestUntil — конец завтрашнего дня в поясе пользователя.
+// Дайджест в 10:00 тогда включает и утренний, и дневной матч следующего дня.
+func digestUntil(now time.Time, utcOffset int) time.Time {
+	loc := time.FixedZone("", utcOffset*3600)
+	local := now.In(loc)
+	start := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
+	// 00:00 через двое суток минус секунда: begin_at <= until покрывает весь завтрашний день.
+	return start.Add(48 * time.Hour).Add(-time.Second)
+}
+
 // processDigestUser готовит и ставит в очередь персональный дайджест одного юзера.
-// Набор совпадает с кнопкой «Узнать расписание»: live и все предстоящие
-// матчи команд и плей-офф подписанных турниров.
+// Окно — до конца завтрашнего дня в поясе пользователя.
 // Пустой результат тоже фиксирует как отправленный, чтобы не дергать БД весь час.
 // Возвращает true, если дайджест с матчами поставлен в очередь.
 func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int, slot string) bool {
@@ -69,7 +78,8 @@ func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int
 	if err != nil {
 		slog.Error("Ошибка проверки подписок на турниры", slog.Int64("user_id", userID), slog.Any("error", err))
 	}
-	live, upcoming, err := b.storage.GetScheduleMatches(userID, 0, hasTournaments)
+	until := digestUntil(time.Now(), utcOffset)
+	live, upcoming, err := b.storage.GetScheduleMatches(userID, until.Unix(), hasTournaments)
 	if err != nil {
 		slog.Error("Ошибка получения матчей для дайджеста", slog.Int64("user_id", userID), slog.Any("error", err))
 		return false
@@ -80,7 +90,7 @@ func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int
 		slog.Int("upcoming", len(upcoming)))
 
 	if len(live) == 0 && len(upcoming) == 0 {
-		slog.Debug("Дайджест пуст, матчей нет",
+		slog.Debug("Дайджест пуст, матчей до конца следующего дня нет",
 			slog.Int64("user_id", userID))
 		b.markDigestSent(userID, slot)
 		return false
@@ -88,7 +98,7 @@ func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int
 
 	subs, _ := b.storage.GetUserSubscriptions(userID)
 	text := formatMatchesMessage(
-		"⏰ <b>Дайджест:</b>",
+		"⏰ <b>Дайджест на 24 часа:</b>",
 		live, upcoming, subs, utcOffset, b.maxStreams,
 	)
 	ok, dropped := b.enqueueToUser(ctx, userID, text)

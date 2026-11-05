@@ -149,7 +149,7 @@ func digestStatusText(enabled bool, hour, utcOffset int) string {
 	if enabled {
 		status = "включен ✅"
 	}
-	return fmt.Sprintf("⏰ <b>Ежедневный дайджест</b>\n\nСтатус: %s\nВремя: %d:00 UTC%+d\n\nКаждое утро пришлем то же, что в «Узнать расписание»: идущие матчи и все предстоящие. Если матчей нет — промолчим.",
+	return fmt.Sprintf("⏰ <b>Ежедневный дайджест</b>\n\nСтатус: %s\nВремя: %d:00 UTC%+d\n\nКаждое утро пришлем матчи ваших команд до конца следующего дня. Если матчей нет — промолчим.",
 		status, hour, utcOffset)
 }
 
