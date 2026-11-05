@@ -40,7 +40,6 @@ func (b *Bot) runDigestCycle(ctx context.Context) {
 		return
 	}
 
-	until := time.Now().Add(24 * time.Hour)
 	sent, empty := 0, 0
 	for _, u := range users {
 		select {
@@ -48,7 +47,7 @@ func (b *Bot) runDigestCycle(ctx context.Context) {
 			return
 		default:
 		}
-		if b.processDigestUser(ctx, u.UserID, u.UtcOffset, until, slot) {
+		if b.processDigestUser(ctx, u.UserID, u.UtcOffset, slot) {
 			sent++
 		} else {
 			empty++
@@ -61,14 +60,16 @@ func (b *Bot) runDigestCycle(ctx context.Context) {
 }
 
 // processDigestUser готовит и ставит в очередь персональный дайджест одного юзера.
+// Набор совпадает с кнопкой «Узнать расписание»: live и все предстоящие
+// матчи команд и плей-офф подписанных турниров.
 // Пустой результат тоже фиксирует как отправленный, чтобы не дергать БД весь час.
 // Возвращает true, если дайджест с матчами поставлен в очередь.
-func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int, until time.Time, slot string) bool {
+func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int, slot string) bool {
 	hasTournaments, err := b.storage.HasTournamentSubscriptions(userID)
 	if err != nil {
 		slog.Error("Ошибка проверки подписок на турниры", slog.Int64("user_id", userID), slog.Any("error", err))
 	}
-	live, upcoming, err := b.storage.GetScheduleMatches(userID, until.Unix(), hasTournaments)
+	live, upcoming, err := b.storage.GetScheduleMatches(userID, 0, hasTournaments)
 	if err != nil {
 		slog.Error("Ошибка получения матчей для дайджеста", slog.Int64("user_id", userID), slog.Any("error", err))
 		return false
@@ -79,7 +80,7 @@ func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int
 		slog.Int("upcoming", len(upcoming)))
 
 	if len(live) == 0 && len(upcoming) == 0 {
-		slog.Debug("Дайджест пуст, матчей на 24 часа нет",
+		slog.Debug("Дайджест пуст, матчей нет",
 			slog.Int64("user_id", userID))
 		b.markDigestSent(userID, slot)
 		return false
@@ -87,7 +88,7 @@ func (b *Bot) processDigestUser(ctx context.Context, userID int64, utcOffset int
 
 	subs, _ := b.storage.GetUserSubscriptions(userID)
 	text := formatMatchesMessage(
-		"⏰ <b>Дайджест на 24 часа:</b>",
+		"⏰ <b>Дайджест:</b>",
 		live, upcoming, subs, utcOffset, b.maxStreams,
 	)
 	ok, dropped := b.enqueueToUser(ctx, userID, text)
