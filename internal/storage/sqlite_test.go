@@ -351,6 +351,8 @@ func TestGetScheduleMatchesUntil(t *testing.T) {
 			Tournament: "EPL", TournamentID: 7,
 			TournamentBeginAt: now.Add(-24 * time.Hour),
 			NumberOfGames:     3,
+			StageName:         "Playoffs",
+			RoundName:         "Semi-final 1",
 		})
 		if err != nil {
 			t.Fatalf("ProcessMatch(%d): %v", id, err)
@@ -359,6 +361,7 @@ func TestGetScheduleMatchesUntil(t *testing.T) {
 	put(1, "running", now.Add(-time.Hour))
 	put(2, "not_started", now.Add(2*time.Hour))
 	put(3, "not_started", now.Add(48*time.Hour))
+	put(2, "not_started", now.Add(2*time.Hour)) // путь UPDATE тоже сохраняет стадию
 
 	live, upcoming, err := s.GetScheduleMatches(1, 0, false)
 	if err != nil {
@@ -383,6 +386,11 @@ func TestGetScheduleMatchesUntil(t *testing.T) {
 	}
 	if upcoming[0].Tournament != "EPL" || upcoming[0].NumberOfGames != 3 {
 		t.Errorf("поля турнира/BO: Tournament=%q NumberOfGames=%d", upcoming[0].Tournament, upcoming[0].NumberOfGames)
+	}
+	for _, m := range append(live, upcoming...) {
+		if m.StageName != "Playoffs" || m.RoundName != "Semi-final 1" {
+			t.Errorf("стадия/раунд после сохранения: %q / %q", m.StageName, m.RoundName)
+		}
 	}
 }
 

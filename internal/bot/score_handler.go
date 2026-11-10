@@ -172,12 +172,19 @@ func underlineBold(esc string) string {
 	return "<u><b>" + esc + "</b></u>"
 }
 
-// boSuffix возвращает " (BO3)" для заголовка матча. 0 = неизвестно, без суффикса.
+// boSuffix объединяет формат серии и известную стадию в коротких скобках.
 func boSuffix(m domain.Match) string {
-	if m.NumberOfGames <= 0 {
+	var parts []string
+	if m.NumberOfGames > 0 {
+		parts = append(parts, fmt.Sprintf("BO%d", m.NumberOfGames))
+	}
+	if stage := matchStage(m); stage != "" {
+		parts = append(parts, stage)
+	}
+	if len(parts) == 0 {
 		return ""
 	}
-	return fmt.Sprintf(" (BO%d)", m.NumberOfGames)
+	return " (" + strings.Join(parts, " · ") + ")"
 }
 
 // seriesLine строит строку счета серии в порядке команд заголовка.

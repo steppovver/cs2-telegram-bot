@@ -35,12 +35,15 @@ func mapPandaMatch(pm pandaMatch) (domain.Match, bool) {
 		Time:              pm.BeginAt,
 		Status:            pm.Status,
 		NumberOfGames:     pm.NumberOfGames,
+		StageName:         pm.Tournament.Name,
 		Streams:           mapPandaStreams(pm),
 		Tournament:        mapPandaTournament(pm),
 		TournamentID:      pm.Serie.ID,
 		TournamentBeginAt: pm.Serie.BeginAt,
 		IsPlayoff:         isPlayoffStage(pm.Tournament.Name, pm.Tournament.HasBracket),
 	}
+	// До двоеточия API указывает раунд, после — команды.
+	m.RoundName, _, _ = strings.Cut(pm.Name, ":")
 	if pm.EndAt != nil && !pm.EndAt.IsZero() {
 		m.EndAt = *pm.EndAt
 	}
