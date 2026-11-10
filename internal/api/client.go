@@ -151,6 +151,44 @@ func (c *Client) FetchMatchesBySerieIDs(ctx context.Context, serieIDs []string, 
 	})
 }
 
+// FetchMatchByID проверяет матч вне фильтров подписок. nil означает только
+// подтверждённую отмену или 404. При ошибке повторит следующий цикл поллера.
+func (c *Client) FetchMatchByID(ctx context.Context, id int) (*domain.Match, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://api.pandascore.co/matches/%d", id), nil)
+	if err != nil {
+		return nil, fmt.Errorf("запрос матча %d: %w", id, err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("получение матча %d: %w", id, err)
+	}
+	defer resp.Body.Close()
+	c.noteResponse(resp)
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("получение матча %d: HTTP %d", id, resp.StatusCode)
+	}
+	var pm pandaMatch
+	if err := json.NewDecoder(resp.Body).Decode(&pm); err != nil {
+		return nil, fmt.Errorf("разбор матча %d: %w", id, err)
+	}
+	if pm.ID != id {
+		return nil, fmt.Errorf("запрошен матч %d, получен %d", id, pm.ID)
+	}
+	if pm.Status == "canceled" {
+		return nil, nil
+	}
+	m, ok := mapPandaMatch(pm)
+	if !ok || m.TeamAID == 0 || m.TeamBID == 0 {
+		return nil, fmt.Errorf("неполные данные матча %d", id)
+	}
+	return &m, nil
+}
+
 // queryMatches выполняет запрос по фильтру: чанкует ID (один матч может
 // попасть в несколько чанков через общего соперника — дедуп по ID),
 // листает страницы чанка до конца данных или выхода за окно Since.

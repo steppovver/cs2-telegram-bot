@@ -394,6 +394,32 @@ func TestGetScheduleMatchesUntil(t *testing.T) {
 	}
 }
 
+func TestGetUpcomingMatchesForReconciliation(t *testing.T) {
+	s := openTestStorage(t)
+	future := time.Now().Add(time.Hour)
+	for i, status := range []string{"not_started", "postponed", "running", "finished", "post_match", "canceled", "not_started"} {
+		begin := future
+		if i == 6 {
+			begin = time.Now().Add(-time.Hour)
+		}
+		if _, err := s.ProcessMatch(domain.Match{
+			ID: i + 1, TeamA: "A", TeamB: "B", TeamAID: 10, TeamBID: 20, Time: begin, Status: status,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.GetUpcomingMatches(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != 1 || got[1].ID != 2 {
+		t.Fatalf("на сверку должны попасть только будущие not_started/postponed: %+v", got)
+	}
+	if got[0].TeamAID != 10 || got[0].TeamBID != 20 {
+		t.Errorf("ID участников потерялись: %+v", got[0])
+	}
+}
+
 func TestGetHLTVURLsEmptyAndChunked(t *testing.T) {
 	s := openTestStorage(t)
 

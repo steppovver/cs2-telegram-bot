@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -363,6 +364,36 @@ func (s *Storage) GetScoreMatches(userID int64, withTournaments bool) ([]domain.
 	}
 	s.FillStreamChannels(matches)
 	return matches, nil
+}
+
+// GetUpcomingMatches возвращает ID матча и участников для сверки с API.
+func (s *Storage) GetUpcomingMatches(ctx context.Context) ([]domain.Match, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, COALESCE(team_a_id, 0), COALESCE(team_b_id, 0)
+		FROM matches WHERE begin_at > ? AND status IN ('not_started', 'postponed')
+		ORDER BY begin_at, id`, time.Now().Unix())
+	if err != nil {
+		return nil, fmt.Errorf("матчи для сверки: %w", err)
+	}
+	defer rows.Close()
+	var matches []domain.Match
+	for rows.Next() {
+		var m domain.Match
+		if err := rows.Scan(&m.ID, &m.TeamAID, &m.TeamBID); err != nil {
+			return nil, fmt.Errorf("чтение матча для сверки: %w", err)
+		}
+		matches = append(matches, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("обход матчей для сверки: %w", err)
+	}
+	return matches, nil
+}
+
+func (s *Storage) DeleteMatch(ctx context.Context, id int) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM matches WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("удаление матча %d: %w", id, err)
+	}
+	return nil
 }
 
 func (s *Storage) CleanOldMatches() {

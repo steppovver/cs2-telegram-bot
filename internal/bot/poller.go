@@ -142,6 +142,9 @@ func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.D
 			matches = mergePlayoffMatches(matches, serieMatches)
 		}
 	}
+	if err == nil && seriesOK {
+		matches = b.reconcileUpcomingMatches(ctx, matches)
+	}
 	usedAfter, remaining, limit := b.panda.APIUsage()
 	cycleReqs := usedAfter - usedBefore
 	if cycleReqs < 0 {
@@ -240,6 +243,46 @@ func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.D
 			slog.Bool("pace_restricted", pace.Restricted))
 	}
 	return delay
+}
+
+// reconcileUpcomingMatches вызывается только после полного успешного опроса
+// команд и серий. Исчезновение из списка само по себе не повод удалять матч.
+func (b *Bot) reconcileUpcomingMatches(ctx context.Context, matches []domain.Match) []domain.Match {
+	upcoming, err := b.storage.GetUpcomingMatches(ctx)
+	if err != nil {
+		slog.Error("Ошибка выборки матчей для сверки", slog.Any("error", err))
+		return matches
+	}
+	seen := make(map[int]bool, len(matches))
+	for _, m := range matches {
+		seen[m.ID] = true
+	}
+	for _, old := range upcoming {
+		if ctx.Err() != nil {
+			return matches
+		}
+		if seen[old.ID] {
+			continue
+		}
+		current, err := b.panda.FetchMatchByID(ctx, old.ID)
+		if err != nil {
+			slog.Error("Ошибка проверки пропавшего матча", slog.Int("match_id", old.ID), slog.Any("error", err))
+			continue
+		}
+		// Сравниваем ID без учёта порядка: переименование и перестановка
+		// участников не означают смену соперника.
+		if current != nil && ((old.TeamAID == current.TeamAID && old.TeamBID == current.TeamBID) ||
+			(old.TeamAID == current.TeamBID && old.TeamBID == current.TeamAID)) {
+			matches = append(matches, *current)
+			continue
+		}
+		if err := b.storage.DeleteMatch(ctx, old.ID); err != nil {
+			slog.Error("Ошибка удаления пропавшего матча", slog.Int("match_id", old.ID), slog.Any("error", err))
+			continue
+		}
+		slog.Info("Удалён пропавший матч: отмена, 404 или смена участников", slog.Int("match_id", old.ID))
+	}
+	return matches
 }
 
 // logAPIUsage пишет сводку использования REST API.
