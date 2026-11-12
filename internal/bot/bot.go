@@ -52,7 +52,7 @@ type Storage interface {
 }
 
 type PandaClient interface {
-	FetchMatchByID(ctx context.Context, id int) (*domain.Match, error)
+	FetchMatchesByIDs(ctx context.Context, ids []int) (map[int]domain.Match, error)
 	FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string, since time.Time) ([]domain.Match, error)
 	FetchMatchesBySerieIDs(ctx context.Context, serieIDs []string, since time.Time) ([]domain.Match, error)
 	// APIUsage: запросов за текущий UTC-час (локальный счётчик), последний

@@ -257,30 +257,38 @@ func (b *Bot) reconcileUpcomingMatches(ctx context.Context, matches []domain.Mat
 	for _, m := range matches {
 		seen[m.ID] = true
 	}
+	missing := make([]domain.Match, 0, len(upcoming))
 	for _, old := range upcoming {
-		if ctx.Err() != nil {
-			return matches
+		if !seen[old.ID] {
+			missing = append(missing, old)
 		}
-		if seen[old.ID] {
-			continue
-		}
-		current, err := b.panda.FetchMatchByID(ctx, old.ID)
-		if err != nil {
-			slog.Error("Ошибка проверки пропавшего матча", slog.Int("match_id", old.ID), slog.Any("error", err))
-			continue
-		}
+	}
+	if len(missing) == 0 || ctx.Err() != nil {
+		return matches
+	}
+	ids := make([]int, len(missing))
+	for i, m := range missing {
+		ids[i] = m.ID
+	}
+	verified, err := b.panda.FetchMatchesByIDs(ctx, ids)
+	if err != nil {
+		slog.Error("Ошибка пакетной проверки пропавших матчей", slog.Int("matches", len(ids)), slog.Any("error", err))
+		return matches
+	}
+	for _, old := range missing {
+		current, found := verified[old.ID]
 		// Сравниваем ID без учёта порядка: переименование и перестановка
 		// участников не означают смену соперника.
-		if current != nil && ((old.TeamAID == current.TeamAID && old.TeamBID == current.TeamBID) ||
+		if found && ((old.TeamAID == current.TeamAID && old.TeamBID == current.TeamBID) ||
 			(old.TeamAID == current.TeamBID && old.TeamBID == current.TeamAID)) {
-			matches = append(matches, *current)
+			matches = append(matches, current)
 			continue
 		}
 		if err := b.storage.DeleteMatch(ctx, old.ID); err != nil {
 			slog.Error("Ошибка удаления пропавшего матча", slog.Int("match_id", old.ID), slog.Any("error", err))
 			continue
 		}
-		slog.Info("Удалён пропавший матч: отмена, 404 или смена участников", slog.Int("match_id", old.ID))
+		slog.Warn("Удалён пропавший матч: отмена, 404 или смена участников", slog.Int("match_id", old.ID))
 	}
 	return matches
 }
