@@ -14,7 +14,8 @@ type reconcilePanda struct {
 	teamMatches, serieMatches    []domain.Match
 	teamErr, serieErr, directErr error
 	direct                       *domain.Match
-	checked                      []int
+	verified                     map[int]domain.Match
+	checked                      [][]int
 	used                         int
 }
 
@@ -28,10 +29,38 @@ func (p *reconcilePanda) FetchMatchesBySerieIDs(context.Context, []string, time.
 	return p.serieMatches, p.serieErr
 }
 
-func (p *reconcilePanda) FetchMatchByID(_ context.Context, id int) (*domain.Match, error) {
+func (p *reconcilePanda) FetchMatchesByIDs(_ context.Context, ids []int) (map[int]domain.Match, error) {
 	p.used++
-	p.checked = append(p.checked, id)
-	return p.direct, p.directErr
+	p.checked = append(p.checked, append([]int(nil), ids...))
+	if p.directErr != nil || p.direct == nil {
+		if p.verified != nil {
+			return p.verified, nil
+		}
+		return nil, p.directErr
+	}
+	return map[int]domain.Match{p.direct.ID: *p.direct}, nil
+}
+
+func TestReconcileUpcomingMatchesUsesSingleBatch(t *testing.T) {
+	bot, st := newTournamentTestBot(t)
+	verified := make(map[int]domain.Match)
+	for id := 1; id <= 2; id++ {
+		m := domain.Match{ID: id, TeamA: "A", TeamB: "B", TeamAID: 10, TeamBID: 20,
+			Time: time.Now().Add(time.Hour), Status: "not_started"}
+		if _, err := st.ProcessMatch(m); err != nil {
+			t.Fatal(err)
+		}
+		verified[id] = m
+	}
+	p := &reconcilePanda{verified: verified}
+	bot.panda = p
+	got := bot.reconcileUpcomingMatches(context.Background(), nil)
+	if len(p.checked) != 1 || len(p.checked[0]) != 2 {
+		t.Fatalf("пакетные вызовы = %v, want один вызов с двумя ID", p.checked)
+	}
+	if len(got) != 2 {
+		t.Fatalf("подтверждённых матчей = %d, want 2", len(got))
+	}
 }
 
 func (p *reconcilePanda) APIUsage() (int, int, int) { return p.used, 900 - p.used, 1000 }
@@ -86,7 +115,7 @@ func TestPollerReconcilesMissingUpcoming(t *testing.T) {
 			}
 			bot.panda = p
 			delay := bot.runPollerCycle(context.Background(), time.Minute)
-			if (len(p.checked) == 1) != tt.wantCheck || (len(p.checked) > 0 && p.checked[0] != old.ID) {
+			if (len(p.checked) == 1) != tt.wantCheck || (len(p.checked) > 0 && (len(p.checked[0]) != 1 || p.checked[0][0] != old.ID)) {
 				t.Fatalf("проверки по ID = %v, wantCheck %v", p.checked, tt.wantCheck)
 			}
 			if delay != time.Duration(p.used)*time.Hour/500 {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,8 +18,8 @@ import (
 const (
 	// matchesAPI — базовый URL списка матчей CS.
 	matchesAPI = "https://api.pandascore.co/csgo/matches"
-	// teamIDsPerRequest — ID команд на запрос, чтобы не упереться в лимиты длины URL.
-	teamIDsPerRequest = 50
+	// filterIDsPerRequest — число ID любого фильтра в одном запросе.
+	filterIDsPerRequest = 50
 	// matchesPerPage — размер страницы. Короткий ответ = последняя страница.
 	matchesPerPage = 100
 	// maxAttempts — попыток GET одной страницы до сдачи.
@@ -92,11 +93,13 @@ func (c *Client) noteResponse(resp *http.Response) {
 // новых строк с query-параметрами в коде нет: новый статус для postponed —
 // просто элемент Statuses.
 type matchesQuery struct {
-	// Filter — поле фильтра по ID: filterOpponent или filterSerie.
+	// Filter определяет тип ID: команда, серия или матч.
 	Filter   string
 	IDs      []string
 	Statuses []string
 	Sort     string
+	// Strict запрещает молча пропускать неполные данные при сверке БД.
+	Strict bool
 	// Since ограничивает окно слева: матч старше — стоп, остаток страниц
 	// тоже старый. Работает только с сортировкой от новых к старым.
 	// nil = без ограничения.
@@ -106,6 +109,7 @@ type matchesQuery struct {
 const (
 	filterOpponent = "opponent_id"
 	filterSerie    = "serie_id"
+	filterMatch    = "id"
 )
 
 // matchStatuses — все статусы, которые бот хранит и показывает.
@@ -114,14 +118,18 @@ var matchStatuses = []string{"not_started", "running", "postponed", "finished"}
 
 // url собирает URL страницы из фильтра.
 func (q matchesQuery) url(page int) string {
-	return fmt.Sprintf("%s?filter[%s]=%s&filter[status]=%s&sort=%s&per_page=%d&page=%d",
-		matchesAPI,
-		q.Filter,
-		strings.Join(q.IDs, ","),
-		strings.Join(q.Statuses, ","),
-		q.Sort,
-		matchesPerPage,
-		page)
+	params := url.Values{
+		"filter[" + q.Filter + "]": {strings.Join(q.IDs, ",")},
+		"per_page":                 {strconv.Itoa(matchesPerPage)},
+		"page":                     {strconv.Itoa(page)},
+	}
+	if len(q.Statuses) > 0 {
+		params.Set("filter[status]", strings.Join(q.Statuses, ","))
+	}
+	if q.Sort != "" {
+		params.Set("sort", q.Sort)
+	}
+	return matchesAPI + "?" + params.Encode()
 }
 
 // FetchMatchesByTeamIDs забирает матчи всех статусов с begin_at >= since.
@@ -151,42 +159,23 @@ func (c *Client) FetchMatchesBySerieIDs(ctx context.Context, serieIDs []string, 
 	})
 }
 
-// FetchMatchByID проверяет матч вне фильтров подписок. nil означает только
-// подтверждённую отмену или 404. При ошибке повторит следующий цикл поллера.
-func (c *Client) FetchMatchByID(ctx context.Context, id int) (*domain.Match, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://api.pandascore.co/matches/%d", id), nil)
+// FetchMatchesByIDs проверяет пропавшие матчи пакетами. Отменённые и уже
+// удалённые PandaScore матчи отсутствуют в результате. Ошибка любой пачки
+// отменяет сверку целиком, чтобы поллер ничего не удалил по неполному ответу.
+func (c *Client) FetchMatchesByIDs(ctx context.Context, ids []int) (map[int]domain.Match, error) {
+	values := make([]string, len(ids))
+	for i, id := range ids {
+		values[i] = strconv.Itoa(id)
+	}
+	result, err := c.queryMatches(ctx, matchesQuery{Filter: filterMatch, IDs: values, Strict: true})
 	if err != nil {
-		return nil, fmt.Errorf("запрос матча %d: %w", id, err)
+		return nil, fmt.Errorf("проверка матчей по ID: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Accept", "application/json")
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("получение матча %d: %w", id, err)
+	matches := make(map[int]domain.Match, len(result))
+	for _, m := range result {
+		matches[m.ID] = m
 	}
-	defer resp.Body.Close()
-	c.noteResponse(resp)
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("получение матча %d: HTTP %d", id, resp.StatusCode)
-	}
-	var pm pandaMatch
-	if err := json.NewDecoder(resp.Body).Decode(&pm); err != nil {
-		return nil, fmt.Errorf("разбор матча %d: %w", id, err)
-	}
-	if pm.ID != id {
-		return nil, fmt.Errorf("запрошен матч %d, получен %d", id, pm.ID)
-	}
-	if pm.Status == "canceled" {
-		return nil, nil
-	}
-	m, ok := mapPandaMatch(pm)
-	if !ok || m.TeamAID == 0 || m.TeamBID == 0 {
-		return nil, fmt.Errorf("неполные данные матча %d", id)
-	}
-	return &m, nil
+	return matches, nil
 }
 
 // queryMatches выполняет запрос по фильтру: чанкует ID (один матч может
@@ -198,8 +187,8 @@ func (c *Client) queryMatches(ctx context.Context, q matchesQuery) ([]domain.Mat
 	}
 
 	merged := make(map[int]domain.Match)
-	for start := 0; start < len(q.IDs); start += teamIDsPerRequest {
-		end := start + teamIDsPerRequest
+	for start := 0; start < len(q.IDs); start += filterIDsPerRequest {
+		end := start + filterIDsPerRequest
 		if end > len(q.IDs) {
 			end = len(q.IDs)
 		}
@@ -221,6 +210,12 @@ func (c *Client) queryMatches(ctx context.Context, q matchesQuery) ([]domain.Mat
 // Навигация — по ссылке rel="next" из Link-заголовка; короткая страница
 // и выход за окно Since — страховки на случай отсутствия линка.
 func (c *Client) queryChunk(ctx context.Context, q matchesQuery, merged map[int]domain.Match) error {
+	requested := make(map[string]bool, len(q.IDs))
+	if q.Strict && q.Filter == filterMatch {
+		for _, id := range q.IDs {
+			requested[id] = true
+		}
+	}
 	nextURL := q.url(1)
 	for page := 1; nextURL != ""; page++ {
 		pandaMatches, next, err := c.getMatchPage(ctx, nextURL, page)
@@ -233,14 +228,21 @@ func (c *Client) queryChunk(ctx context.Context, q matchesQuery, merged map[int]
 		}
 
 		for _, pm := range pandaMatches {
+			if q.Strict && q.Filter == filterMatch && !requested[strconv.Itoa(pm.ID)] {
+				return fmt.Errorf("получен незапрошенный матч %d", pm.ID)
+			}
 			if q.Since != nil && !pm.BeginAt.IsZero() && pm.BeginAt.Before(*q.Since) {
 				return nil
 			}
-			if m, ok := mapPandaMatch(pm); ok {
+			m, ok := mapPandaMatch(pm)
+			if q.Strict && pm.Status != "canceled" && (!ok || m.TeamAID == 0 || m.TeamBID == 0) {
+				return fmt.Errorf("неполные данные матча %d", pm.ID)
+			}
+			if ok {
 				merged[m.ID] = m
 			}
 		}
-		if next == "" || len(pandaMatches) < matchesPerPage {
+		if next == "" {
 			return nil
 		}
 		nextURL = next
@@ -320,7 +322,8 @@ func (c *Client) getMatchPage(ctx context.Context, pageURL string, page int) ([]
 // parseNextLink достает URL rel="next" из Link-заголовка вида
 // `<url1>; rel="last", <url2>; rel="next"`. Нет линка — пустая строка.
 func parseNextLink(header string) string {
-	for _, part := range strings.Split(header, ",") {
+	// Запятые внутри URL могут разделять ID фильтра, а не ссылки.
+	for _, part := range strings.Split(header, ">,") {
 		segments := strings.SplitN(strings.TrimSpace(part), ";", 2)
 		if len(segments) != 2 {
 			continue
