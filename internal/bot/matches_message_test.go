@@ -107,7 +107,8 @@ func TestFormatMatchCard(t *testing.T) {
 		},
 	}
 	got := formatMatchCard(m, "<b>Nemiga</b>", "<b>FURIA</b>", true, nil)
-	if !strings.HasPrefix(got, "<b>Nemiga</b> vs <b>FURIA</b> (BO5)\n<blockquote>") {
+	if !strings.HasPrefix(got, `<b>Nemiga</b> vs <b>FURIA</b> <a href="https://www.google.com/search?q=`) ||
+		!strings.Contains(got, ">(BO5)</a>\n<blockquote>") {
 		t.Fatalf("title outside blockquote: %q", got)
 	}
 	if !strings.HasSuffix(got, "</blockquote>") {
@@ -150,9 +151,9 @@ func TestFormatMatchCardNoOfficialNoTournament(t *testing.T) {
 }
 
 func TestFormatMatchCardTBDNoHLTV(t *testing.T) {
-	m := domain.Match{TeamA: "TBD", TeamB: "FURIA", Tournament: "EPL"}
+	m := domain.Match{TeamA: "TBD", TeamB: "FURIA", Tournament: "EPL", NumberOfGames: 3}
 	got := formatMatchCard(m, "TBD", "FURIA", true, nil)
-	if strings.Contains(got, "HLTV:") {
+	if strings.Contains(got, "HLTV:") || !strings.HasPrefix(got, "TBD vs FURIA (BO3)\n") {
 		t.Errorf("TBD must skip HLTV: %q", got)
 	}
 	if !strings.Contains(got, "Турнир:") {

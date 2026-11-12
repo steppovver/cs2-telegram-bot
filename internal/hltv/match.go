@@ -203,7 +203,7 @@ func matchURLID(u string) int64 {
 	return id
 }
 
-// matchSearchQuery — запрос к поисковику / Google «Мне повезёт».
+// matchSearchQuery — запрос для поиска страницы матча.
 // Дата (Jan 2) сужает выдачу при повторных встречах тех же команд.
 func matchSearchQuery(m domain.Match) string {
 	q := "site:hltv.org/matches " + m.TeamA + " vs " + m.TeamB
@@ -240,24 +240,24 @@ func ResolveMatch(ctx context.Context, sp SearchProvider, m domain.Match) (strin
 	return best, nil
 }
 
-// googleLuckyURL строит ссылку на Google "Мне повезёт" (btnI=1):
-// открывается сразу первый результат поиска.
-func googleLuckyURL(query string) string {
-	return "https://www.google.com/search?btnI=1&q=" + url.QueryEscape(query)
+func googleSearchURL(query string) string {
+	return "https://www.google.com/search?q=" + url.QueryEscape(query)
 }
 
-// MatchURL возвращает ссылку на профиль матча: точный URL из кеша
-// резолвера (m.HLTVURL), а если его еще нет — Google "Мне повезёт":
-// открывается сразу первый результат по site:hltv.org/matches.
-// Дата (Oct 4) отсекает встречи тех же команд на прошлых турнирах.
+// MatchSearchURL возвращает ссылку на выдачу Google по страницам матча на HLTV.
+func MatchSearchURL(m domain.Match) string {
+	return googleSearchURL(matchSearchQuery(m))
+}
+
+// MatchURL возвращает точную ссылку из кеша резолвера или ссылку на поиск.
 func MatchURL(m domain.Match) string {
 	if m.HLTVURL != "" {
 		return m.HLTVURL
 	}
-	return googleLuckyURL(matchSearchQuery(m))
+	return MatchSearchURL(m)
 }
 
-// EventURL строит ссылку на страницу турнира через Google "Мне повезёт".
+// EventURL возвращает ссылку на выдачу Google по страницам турнира на HLTV.
 func EventURL(tournament string) string {
-	return googleLuckyURL("site:hltv.org/events " + strings.TrimSpace(tournament))
+	return googleSearchURL("site:hltv.org/events " + strings.TrimSpace(tournament))
 }

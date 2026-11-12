@@ -37,8 +37,12 @@ func TestMatchStageRendering(t *testing.T) {
 			m := domain.Match{
 				TeamA: "A", TeamB: "B", StageName: tt.stage, RoundName: tt.round,
 				IsPlayoff: tt.playoff, NumberOfGames: tt.bo,
+				HLTVURL: "https://www.hltv.org/matches/1/a-vs-b",
 			}
-			want := "A vs B" + tt.want + "\n"
+			want := "A vs B\n"
+			if tt.want != "" {
+				want = `A vs B <a href="https://www.google.com/search?q=site%3Ahltv.org%2Fmatches+A+vs+B">` + strings.TrimSpace(tt.want) + "</a>\n"
+			}
 			card := formatMatchCard(m, "A", "B", false, nil)
 			if !strings.HasPrefix(card, want) {
 				t.Errorf("карточка: %q, want prefix %q", card, want)

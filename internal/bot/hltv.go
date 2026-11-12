@@ -49,8 +49,16 @@ func (b *Bot) attachHLTV(matches []domain.Match) {
 // hltvMatchLine возвращает строку ссылки на профиль матча.
 // TBD-команды — пустая строка, рендер ее пропускает.
 func hltvMatchLine(m domain.Match) string {
+	link := hltvMatchLink(m, "Профиль матча", hltv.MatchURL(m))
+	if link == "" {
+		return ""
+	}
+	return "HLTV: " + link
+}
+
+func hltvMatchLink(m domain.Match, label, targetURL string) string {
 	if m.TeamA == "TBD" || m.TeamB == "TBD" {
 		return ""
 	}
-	return fmt.Sprintf(`HLTV: <a href="%s">Профиль матча</a>`, html.EscapeString(hltv.MatchURL(m)))
+	return fmt.Sprintf(`<a href="%s">%s</a>`, html.EscapeString(targetURL), html.EscapeString(label))
 }

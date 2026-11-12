@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"cs2bot/internal/domain"
+	"cs2bot/internal/hltv"
 
 	"gopkg.in/telebot.v3"
 )
@@ -184,7 +185,11 @@ func boSuffix(m domain.Match) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return " (" + strings.Join(parts, " · ") + ")"
+	label := "(" + strings.Join(parts, " · ") + ")"
+	if link := hltvMatchLink(m, label, hltv.MatchSearchURL(m)); link != "" {
+		return " " + link
+	}
+	return " " + label
 }
 
 // seriesLine строит строку счета серии в порядке команд заголовка.

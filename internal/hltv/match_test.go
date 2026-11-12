@@ -196,7 +196,7 @@ func TestMatchURL(t *testing.T) {
 		Tournament: "ESL Pro League Season 24 2026",
 		Time:       time.Date(2026, 10, 3, 9, 1, 0, 0, time.UTC),
 	}
-	want := "https://www.google.com/search?btnI=1&q=site%3Ahltv.org%2Fmatches+Team+Falcons+vs+TYLOO+ESL+Pro+League+Season+24+2026+Oct+3"
+	want := "https://www.google.com/search?q=site%3Ahltv.org%2Fmatches+Team+Falcons+vs+TYLOO+ESL+Pro+League+Season+24+2026+Oct+3"
 	if got := MatchURL(m); got != want {
 		t.Errorf("MatchURL = %q, want %q", got, want)
 	}
@@ -226,7 +226,7 @@ func TestMatchURLPrefersCached(t *testing.T) {
 
 func TestEventURL(t *testing.T) {
 	got := EventURL("ESL Pro League Season 24 2026")
-	if !strings.HasPrefix(got, "https://www.google.com/search?btnI=1&q=site%3Ahltv.org%2Fevents+ESL+Pro+League") {
+	if !strings.HasPrefix(got, "https://www.google.com/search?q=site%3Ahltv.org%2Fevents+ESL+Pro+League") {
 		t.Errorf("EventURL = %q", got)
 	}
 }

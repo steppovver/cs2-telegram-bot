@@ -12,6 +12,7 @@ func TestBuildScoreBlockRunning(t *testing.T) {
 	m := domain.Match{
 		TeamA: "G2", TeamB: "NAVI", TeamAID: 1, TeamBID: 2,
 		NumberOfGames: 3,
+		HLTVURL:       "https://www.hltv.org/matches/1/g2-vs-navi",
 		Tournament:    "EPL",
 		Status:        "running",
 		Time:          time.Now().Add(-30 * time.Minute),
@@ -22,7 +23,8 @@ func TestBuildScoreBlockRunning(t *testing.T) {
 	}
 	subs := []domain.TeamInfo{{ID: 1, Name: "G2", Favorite: true}}
 	got := buildScoreBlock(m, subs, 3, false, true)
-	if !strings.HasPrefix(got, "<u><b>G2</b></u> vs NAVI (BO3)\n<blockquote>") {
+	if !strings.HasPrefix(got, `<u><b>G2</b></u> vs NAVI <a href="https://www.google.com/search?q=site%3Ahltv.org%2Fmatches+G2+vs+NAVI+EPL+`) ||
+		!strings.Contains(got, ">(BO3)</a>\n<blockquote>") {
 		t.Fatalf("title outside blockquote: %q", got)
 	}
 	inner := got[strings.Index(got, "<blockquote>")+len("<blockquote>") : strings.LastIndex(got, "</blockquote>")]
@@ -32,7 +34,7 @@ func TestBuildScoreBlockRunning(t *testing.T) {
 		"Идет:",
 		"Трансляция:",
 		"Найти трансляцию:",
-		"HLTV:",
+		`HLTV: <a href="https://www.hltv.org/matches/1/g2-vs-navi">Профиль матча</a>`,
 	} {
 		if !strings.Contains(inner, want) {
 			t.Errorf("missing %q in blockquote %q", want, inner)
@@ -74,14 +76,14 @@ func TestFormatScoreMessageSections(t *testing.T) {
 		{
 			ID: 1, TeamA: "G2", TeamB: "NAVI", TeamAID: 1, TeamBID: 2,
 			Status: "running", Tournament: "EPL", TournamentID: 7,
-			Time: now.Add(-20 * time.Minute),
+			Time:    now.Add(-20 * time.Minute),
 			Results: []domain.MatchResult{{TeamID: 1, Score: 0}, {TeamID: 2, Score: 0}},
 		},
 		{
 			ID: 2, TeamA: "FaZe", TeamB: "Vitality", TeamAID: 3, TeamBID: 4,
 			Status: "finished", Tournament: "EPL", TournamentID: 7,
-			Time:  now.Add(-3 * time.Hour),
-			EndAt: now.Add(-2 * time.Hour),
+			Time:    now.Add(-3 * time.Hour),
+			EndAt:   now.Add(-2 * time.Hour),
 			Results: []domain.MatchResult{{TeamID: 3, Score: 2}, {TeamID: 4, Score: 0}},
 		},
 	}
