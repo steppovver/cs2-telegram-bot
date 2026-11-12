@@ -117,7 +117,7 @@ func TestFormatMatchCard(t *testing.T) {
 	for _, want := range []string{
 		"Турнир:",
 		"PGL Masters Bucharest 2026",
-		"Официальная трансляция:",
+		"Трансляция:",
 		"PGL (Twitch)",
 		"PGL (YouTube)",
 		"Найти трансляцию:",
@@ -141,7 +141,7 @@ func TestFormatMatchCardNoOfficialNoTournament(t *testing.T) {
 	if strings.Contains(got, "Турнир:") {
 		t.Errorf("empty tournament must be skipped: %q", got)
 	}
-	if strings.Contains(got, "Официальная трансляция:") {
+	if strings.Contains(got, "Трансляция:") {
 		t.Errorf("no official line without streams: %q", got)
 	}
 	if !strings.Contains(got, "<blockquote>Найти трансляцию:") {

@@ -216,7 +216,7 @@ func fallbackLine(m domain.Match) string {
 }
 
 // streamLines возвращает строки трансляций:
-//   - "Официальная трансляция: ..." — official=true плюс похожие YouTube
+//   - "Трансляция: ..." — official=true плюс похожие YouTube
 //     (если среди official ещё нет YouTube);
 //   - "Найти трансляцию: ..." — fallback на поиск, всегда последней строкой.
 //
@@ -242,7 +242,7 @@ func streamLines(m domain.Match) []string {
 			links = append(links, fmt.Sprintf(`<a href="%s">%s</a>`,
 				html.EscapeString(s.URL), html.EscapeString(streamLinkText(s))))
 		}
-		lines = append(lines, "Официальная трансляция: "+strings.Join(links, " | "))
+		lines = append(lines, "Трансляция: "+strings.Join(links, " | "))
 	}
 	lines = append(lines, fallbackLine(m))
 	return lines
