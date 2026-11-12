@@ -3,7 +3,6 @@ package bot
 import (
 	"context"
 	"fmt"
-	"html"
 	"log/slog"
 	"sort"
 	"strings"
@@ -59,9 +58,6 @@ type matchEvent struct {
 	match       domain.Match
 	kind        matchEventKind
 	timeChanged bool
-	oldTime     time.Time
-	oldTeamA    string
-	oldTeamB    string
 	// favA/favB — какая сторона любимая у получателя этой копии события.
 	favA bool
 	favB bool
@@ -200,9 +196,6 @@ func (b *Bot) runPollerCycle(ctx context.Context, fallback time.Duration) time.D
 			match:       match,
 			kind:        kind,
 			timeChanged: change.TimeChanged,
-			oldTime:     change.OldTime,
-			oldTeamA:    change.OldTeamA,
-			oldTeamB:    change.OldTeamB,
 		})
 	}
 
@@ -527,23 +520,20 @@ func buildCombinedUpdateMessage(evts []matchEvent, off int) string {
 		sb.WriteString("🔄 <b>Определились соперники!</b>\n\n")
 		for _, ev := range opponents {
 			timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
-			timeText := fmt.Sprintf("⏰ Время: %s", timeStr)
+			timeLabel := "Время"
 			if ev.timeChanged {
-				oldTimeStr := formatTGTime(ev.oldTime, "dt", "15:04 02.01", off)
-				timeText = fmt.Sprintf("<s>Время: %s</s>\n⏰ Новое: %s", oldTimeStr, timeStr)
+				timeLabel = "Новое время"
 			}
-			sb.WriteString(fmt.Sprintf("<s>%s vs %s</s>\n🛡 %s vs %s\n%s\n\n",
-				html.EscapeString(ev.oldTeamA), html.EscapeString(ev.oldTeamB),
-				pushTeam(ev.match.TeamA, ev.favA), pushTeam(ev.match.TeamB, ev.favB), timeText))
+			sb.WriteString(fmt.Sprintf("🛡 %s vs %s\n⏰ %s: %s\n\n",
+				pushTeam(ev.match.TeamA, ev.favA), pushTeam(ev.match.TeamB, ev.favB), timeLabel, timeStr))
 		}
 	}
 	if len(times) > 0 {
 		sb.WriteString("⚠️ <b>Время матчей изменено!</b>\n\n")
 		for _, ev := range times {
 			timeStr := formatTGTime(ev.match.Time, "dt", "15:04 02.01", off)
-			oldTimeStr := formatTGTime(ev.oldTime, "dt", "15:04 02.01", off)
-			sb.WriteString(fmt.Sprintf("🛡 %s vs %s\n<s>Старое время: %s</s>\n⏰ Новое время: %s\n\n",
-				pushTeam(ev.match.TeamA, ev.favA), pushTeam(ev.match.TeamB, ev.favB), oldTimeStr, timeStr))
+			sb.WriteString(fmt.Sprintf("🛡 %s vs %s\n⏰ Новое время: %s\n\n",
+				pushTeam(ev.match.TeamA, ev.favA), pushTeam(ev.match.TeamB, ev.favB), timeStr))
 		}
 	}
 	return strings.TrimSuffix(sb.String(), "\n")

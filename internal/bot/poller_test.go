@@ -76,3 +76,36 @@ func TestBuildCombinedUpdateMessageStarsFavorite(t *testing.T) {
 		t.Fatalf("чужая сторона жирная и без подчёркивания: %q", got)
 	}
 }
+
+func TestBuildCombinedUpdateMessageShowsCurrentMatchDetails(t *testing.T) {
+	const matchDetails = "🛡 <b>Spirit</b> vs <b>G2</b>\n"
+	const currentTime = `<tg-time unix="1794480600" format="dt">13:50 12.11 UTC+3</tg-time>`
+	tests := []struct {
+		name        string
+		kind        matchEventKind
+		timeChanged bool
+		heading     string
+		timeLabel   string
+	}{
+		{"rescheduled", eventTimeChanged, true, "⚠️ <b>Время матчей изменено!</b>", "Новое время"},
+		{"opponent determined or replaced", eventOpponent, false, "🔄 <b>Определились соперники!</b>", "Время"},
+		{"opponent and time changed", eventOpponent, true, "🔄 <b>Определились соперники!</b>", "Новое время"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ev := matchEvent{
+				kind:        tt.kind,
+				timeChanged: tt.timeChanged,
+				match: domain.Match{
+					TeamA: "Spirit",
+					TeamB: "G2",
+					Time:  time.Date(2026, 11, 12, 10, 50, 0, 0, time.UTC),
+				},
+			}
+			want := tt.heading + "\n\n" + matchDetails + "⏰ " + tt.timeLabel + ": " + currentTime + "\n"
+			if got := buildCombinedUpdateMessage([]matchEvent{ev}, 3); got != want {
+				t.Fatalf("buildCombinedUpdateMessage() = %q, want %q", got, want)
+			}
+		})
+	}
+}
