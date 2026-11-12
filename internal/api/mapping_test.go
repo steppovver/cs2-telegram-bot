@@ -105,6 +105,9 @@ func TestMapPandaMatchFromFixture(t *testing.T) {
 	if m.IsPlayoff {
 		t.Error("Group Stage не должен считаться плей-офф")
 	}
+	if m.StageName != "Group Stage" || m.RoundName != "Round 1" {
+		t.Errorf("стадия/раунд: %q / %q", m.StageName, m.RoundName)
+	}
 }
 
 func TestIsPlayoffStage(t *testing.T) {
@@ -167,5 +170,8 @@ func TestMapPandaPlayoffFixture(t *testing.T) {
 	}
 	if m.NumberOfGames != 5 {
 		t.Errorf("NumberOfGames = %d, want 5", m.NumberOfGames)
+	}
+	if m.StageName != "Playoffs" || m.RoundName != "Grand final" {
+		t.Errorf("стадия/раунд: %q / %q", m.StageName, m.RoundName)
 	}
 }

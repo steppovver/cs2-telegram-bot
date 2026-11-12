@@ -21,6 +21,8 @@ type Storage interface {
 	GetMatchesForReminder() ([]domain.Match, error)
 	GetMatchFans(teamAID, teamBID int) ([]domain.MatchFan, error)
 	ProcessMatch(m domain.Match) (domain.MatchChange, error)
+	GetUpcomingMatches(ctx context.Context) ([]domain.Match, error)
+	DeleteMatch(ctx context.Context, id int) error
 	MarkMatchAsNotified(matchID int) error
 	CleanOldMatches()
 	CleanStaleRunningMatches(apiMatchIDs map[int]bool)
@@ -50,6 +52,7 @@ type Storage interface {
 }
 
 type PandaClient interface {
+	FetchMatchByID(ctx context.Context, id int) (*domain.Match, error)
 	FetchMatchesByTeamIDs(ctx context.Context, teamIDs []string, since time.Time) ([]domain.Match, error)
 	FetchMatchesBySerieIDs(ctx context.Context, serieIDs []string, since time.Time) ([]domain.Match, error)
 	// APIUsage: запросов за текущий UTC-час (локальный счётчик), последний

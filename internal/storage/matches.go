@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -70,19 +71,24 @@ func decodeStreams(raw sql.NullString) []domain.MatchStream {
 	return kept
 }
 
-// scorePayload — формат колонки score_json: счет серии и карты одним JSON.
+// scorePayload — формат колонки score_json: счет, карты и метаданные матча.
 type scorePayload struct {
-	Results  []domain.MatchResult `json:"results"`
-	Games    []domain.MatchGame   `json:"games"`
-	NumGames int                  `json:"num_games"`
+	Results   []domain.MatchResult `json:"results"`
+	Games     []domain.MatchGame   `json:"games"`
+	NumGames  int                  `json:"num_games"`
+	StageName string               `json:"stage_name,omitempty"`
+	RoundName string               `json:"round_name,omitempty"`
 }
 
 // encodeScore сериализует счет серии и карты для колонки score_json.
 func encodeScore(m domain.Match) string {
-	if len(m.Results) == 0 && len(m.Games) == 0 && m.NumberOfGames == 0 {
+	if len(m.Results) == 0 && len(m.Games) == 0 && m.NumberOfGames == 0 && m.StageName == "" && m.RoundName == "" {
 		return "[]"
 	}
-	b, err := json.Marshal(scorePayload{Results: m.Results, Games: m.Games, NumGames: m.NumberOfGames})
+	b, err := json.Marshal(scorePayload{
+		Results: m.Results, Games: m.Games, NumGames: m.NumberOfGames,
+		StageName: m.StageName, RoundName: m.RoundName,
+	})
 	if err != nil {
 		return "[]"
 	}
@@ -106,6 +112,8 @@ func decodeScore(raw sql.NullString, m *domain.Match) {
 	m.Results = p.Results
 	m.Games = p.Games
 	m.NumberOfGames = p.NumGames
+	m.StageName = p.StageName
+	m.RoundName = p.RoundName
 }
 
 // endAtUnix переводит EndAt в unix для БД: 0 = неизвестно.
@@ -356,6 +364,36 @@ func (s *Storage) GetScoreMatches(userID int64, withTournaments bool) ([]domain.
 	}
 	s.FillStreamChannels(matches)
 	return matches, nil
+}
+
+// GetUpcomingMatches возвращает ID матча и участников для сверки с API.
+func (s *Storage) GetUpcomingMatches(ctx context.Context) ([]domain.Match, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, COALESCE(team_a_id, 0), COALESCE(team_b_id, 0)
+		FROM matches WHERE begin_at > ? AND status IN ('not_started', 'postponed')
+		ORDER BY begin_at, id`, time.Now().Unix())
+	if err != nil {
+		return nil, fmt.Errorf("матчи для сверки: %w", err)
+	}
+	defer rows.Close()
+	var matches []domain.Match
+	for rows.Next() {
+		var m domain.Match
+		if err := rows.Scan(&m.ID, &m.TeamAID, &m.TeamBID); err != nil {
+			return nil, fmt.Errorf("чтение матча для сверки: %w", err)
+		}
+		matches = append(matches, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("обход матчей для сверки: %w", err)
+	}
+	return matches, nil
+}
+
+func (s *Storage) DeleteMatch(ctx context.Context, id int) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM matches WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("удаление матча %d: %w", id, err)
+	}
+	return nil
 }
 
 func (s *Storage) CleanOldMatches() {

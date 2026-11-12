@@ -40,6 +40,7 @@ type pandaGame struct {
 
 type pandaMatch struct {
 	ID                int             `json:"id"`
+	Name              string          `json:"name"`
 	BeginAt           time.Time       `json:"begin_at"`
 	EndAt             *time.Time      `json:"end_at"`
 	Status            string          `json:"status"`
