@@ -11,8 +11,30 @@ const tgChunkLimit = 3500
 
 func formatTGTime(t time.Time, tgFormat, fallbackLayout string, utcOffset int) string {
 	local := t.UTC().Add(time.Duration(utcOffset) * time.Hour)
-	return fmt.Sprintf(`<tg-time unix="%d" format="%s">%s UTC%+d</tg-time>`,
-		t.Unix(), tgFormat, local.Format(fallbackLayout), utcOffset)
+	fallback := fmt.Sprintf("%s UTC%+d", local.Format(fallbackLayout), utcOffset)
+	return tgTimeTag(t, tgFormat, fallback)
+}
+
+func formatUpcomingMatchTime(start, now time.Time, utcOffset int) string {
+	offset := time.Duration(utcOffset) * time.Hour
+	localStart := start.UTC().Add(offset)
+	year, month, day := localStart.Date()
+	nowYear, nowMonth, nowDay := now.UTC().Add(offset).Date()
+
+	tgFormat, layout := "dt", "02.01.2006 15:04"
+	switch {
+	case year == nowYear && month == nowMonth && day == nowDay:
+		tgFormat, layout = "t", "15:04"
+	case year == nowYear && month == nowMonth:
+		layout = "2, 15:04"
+	case year == nowYear:
+		layout = "02.01 15:04"
+	}
+	return tgTimeTag(start, tgFormat, localStart.Format(layout))
+}
+
+func tgTimeTag(t time.Time, format, fallback string) string {
+	return fmt.Sprintf(`<tg-time unix="%d" format="%s">%s</tg-time>`, t.Unix(), format, fallback)
 }
 
 // chunkLines режет текст на куски по границам строк, чтобы каждый влез в limit.

@@ -3,6 +3,7 @@ package bot
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"cs2bot/internal/domain"
 )
@@ -66,6 +67,7 @@ func formatMatchesMessage(header string, live, upcoming []domain.Match, subs []d
 	}
 
 	if len(upcoming) > 0 {
+		now := time.Now()
 		sb.WriteString("📅 <b>Матчи:</b>\n\n")
 		for gi, group := range groupMatchesByTournament(upcoming) {
 			if gi > 0 {
@@ -73,7 +75,7 @@ func formatMatchesMessage(header string, live, upcoming []domain.Match, subs []d
 			}
 			sb.WriteString(tournamentHeader(group) + "\n")
 			for _, match := range group.Matches {
-				timeStr := formatTGTime(match.Time, "dt", "02.01 15:04", utcOffset)
+				timeStr := formatUpcomingMatchTime(match.Time, now, utcOffset)
 				teamA := highlightTeam(match.TeamA, match.TeamAID, subs)
 				teamB := highlightTeam(match.TeamB, match.TeamBID, subs)
 				sb.WriteString(fmt.Sprintf("%s | %s vs %s%s\n", timeStr, teamA, teamB, boSuffix(match)))

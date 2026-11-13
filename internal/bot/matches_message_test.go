@@ -1,12 +1,35 @@
 package bot
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"cs2bot/internal/domain"
 )
+
+func TestFormatUpcomingMatchTime(t *testing.T) {
+	now := time.Date(2026, 11, 29, 22, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name   string
+		start  time.Time
+		offset int
+		want   string
+	}{
+		{"today after local midnight", now.Add(18*time.Hour + 30*time.Minute), 3, `format="t">19:30`},
+		{"tomorrow before local midnight", now.Add(18*time.Hour + 30*time.Minute), -3, `format="dt">30, 13:30`},
+		{"next month", now.Add(24 * time.Hour), 3, `format="dt">01.12 01:00`},
+		{"next year at local midnight", time.Date(2026, 12, 31, 21, 0, 0, 0, time.UTC), 3, `format="dt">01.01.2027 00:00`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			want := fmt.Sprintf(`<tg-time unix="%d" %s</tg-time>`, tc.start.Unix(), tc.want)
+			if got := formatUpcomingMatchTime(tc.start, now, tc.offset); got != want {
+				t.Errorf("got %q, want %q", got, want)
+			}
+		})
+	}
+}
 
 func TestFormatMatchesMessage(t *testing.T) {
 	subs := []domain.TeamInfo{{ID: 1, Name: "G2"}}
